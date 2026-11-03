@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="en" data-static>
+<head>
+  <meta charset="utf-8">
+  <base href="../../../../">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="robots" content="noindex">
+  <title>Print sign · FanWall</title>
+  <link rel="icon" href="favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="css/app.css">
+</head>
+<body>
+  <p class="demo-banner">View-only demo · <a href="">all demo pages</a></p>
+  <div class="print-bar">
+    <button type="button" class="primary" id="print">Print this sign</button>
+  </div>
+  <article class="sign" id="sign" hidden>
+    <p class="event" id="event-name"></p>
+    <h1 id="cos-name"></h1>
+    <p class="character" id="cos-character"></p>
+    <img class="qr" id="qr" alt="">
+    <p class="cta" id="cta"></p>
+    <p class="fine">No account needed. Everything is reviewed by the organizer before it's shared.</p>
+  </article>
+  <div id="status" role="status" aria-live="polite"></div>
+  <script type="module" src="js/print.js"></script>
+</body>
+</html>

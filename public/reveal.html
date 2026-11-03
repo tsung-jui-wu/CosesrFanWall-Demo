@@ -1,0 +1,83 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="robots" content="noindex">
+  <meta name="theme-color" content="#0e0c12">
+  <title>For you · FanWall</title>
+  <link rel="icon" href="/favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="/css/app.css">
+</head>
+<body class="reveal">
+  <canvas id="stage" role="img" aria-label="Fan photo mosaic"></canvas>
+
+  <div id="caption" class="caption" aria-hidden="true">
+    <p class="caption-title" id="caption-title"></p>
+    <p class="caption-sub" id="caption-sub"></p>
+  </div>
+
+  <section id="intro" class="overlay" aria-labelledby="intro-title">
+    <div class="overlay-card spotlight">
+      <p class="eyebrow" id="intro-event"></p>
+      <h1 id="intro-title">Loading…</h1>
+      <p id="intro-text"></p>
+      <button type="button" class="primary big" id="play" hidden disabled>Preparing…</button>
+      <p><button type="button" class="link" id="intro-manage" hidden>Manage your page</button></p>
+    </div>
+  </section>
+
+  <nav id="controls" class="controls" aria-label="Playback" hidden>
+    <button type="button" id="skip">Skip</button>
+    <button type="button" id="reset-zoom" hidden>Reset zoom</button>
+    <button type="button" id="replay">Replay</button>
+    <button type="button" class="primary" id="export" hidden>Save image</button>
+    <button type="button" id="manage-open">Manage</button>
+  </nav>
+  <p id="zoom-hint" class="zoom-hint" hidden>Pinch or scroll to zoom. Tap a photo or note to open it.</p>
+
+  <dialog id="manage" class="drawer" aria-labelledby="manage-h">
+    <div class="drawer-head">
+      <h2 id="manage-h">Manage your page</h2>
+      <button type="button" class="close" data-close aria-label="Close">✕</button>
+    </div>
+    <p class="small">Hidden items stay saved but leave the mosaic, the saved image, and the download. Deleting is permanent.</p>
+    <p id="download-row"><a class="button" id="download" href="#" download>Download all photos and notes (ZIP)</a></p>
+    <ul id="items" class="items"></ul>
+    <section class="danger-zone" aria-labelledby="optout-h">
+      <h3 id="optout-h">Remove everything</h3>
+      <p class="small">Deletes every photo and note sent to you here, for good, and closes your fan page so no one can send more.</p>
+      <button type="button" class="danger" id="optout-start">Remove everything and close this page</button>
+      <div id="optout-confirm" hidden>
+        <p class="small"><strong>This can't be undone.</strong> Save anything you want to keep first.</p>
+        <div class="row">
+          <button type="button" id="optout-cancel">Cancel</button>
+          <button type="button" class="danger solid" id="optout-go">Yes, delete everything</button>
+        </div>
+      </div>
+    </section>
+  </dialog>
+
+  <dialog id="lightbox" class="lightbox" aria-label="Fan photo or note">
+    <button type="button" class="close" data-close aria-label="Close">✕</button>
+    <img id="lb-img" alt="" hidden>
+    <div id="lb-actions" class="row lb-actions" hidden>
+      <button type="button" id="lb-edit">Edit</button>
+      <button type="button" id="lb-save">Save photo</button>
+    </div>
+    <p id="lb-message" class="lb-message"></p>
+    <p id="lb-name" class="lb-name"></p>
+  </dialog>
+
+
+  <!-- The canvas is decorative for assistive tech; this carries the same content as text. -->
+  <section class="visually-hidden" aria-labelledby="sr-h">
+    <h2 id="sr-h">Messages from fans</h2>
+    <p id="sr-summary"></p>
+    <ul id="sr-list"></ul>
+  </section>
+
+  <div id="status" role="status" aria-live="polite"></div>
+  <script type="module" src="/js/reveal.js"></script>
+</body>
+</html>

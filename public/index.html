@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="robots" content="noindex">
+  <title>FanWall</title>
+  <link rel="icon" href="/favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="/css/app.css">
+</head>
+<body class="landing">
+  <main>
+    <header class="topbar">
+      <span class="wordmark">FanWall</span>
+    </header>
+    <section class="spotlight" aria-labelledby="hero-h">
+      <h1 id="hero-h">FanWall</h1>
+      <p class="lead">Collect photos and thank-you notes from fans for each guest cosplayer, moderate them,
+        then give each cosplayer one calm link that plays them back as a mosaic.</p>
+    </section>
+
+    <section class="panel" aria-labelledby="create-h">
+      <h2 id="create-h">Create an event</h2>
+      <form id="create">
+        <div class="field">
+          <label for="name">Event name</label>
+          <input id="name" name="name" type="text" maxlength="80" required autocomplete="off">
+        </div>
+        <div class="field">
+          <label for="retention">Keep submissions for (days after the event closes)</label>
+          <input id="retention" name="retentionDays" type="number" min="1" max="90" value="30" required>
+          <p class="small muted">Nothing is kept longer than 90 days after upload, whatever you choose.</p>
+        </div>
+        <div class="field" id="key-field" hidden>
+          <label for="key">Create key</label>
+          <input id="key" name="key" type="password" autocomplete="off">
+          <p class="small muted">This host asks for a key before new events can be made.</p>
+        </div>
+        <button class="primary" type="submit">Create event</button>
+      </form>
+    </section>
+  </main>
+  <div id="status" role="status" aria-live="polite"></div>
+  <script type="module" src="/js/landing.js"></script>
+</body>
+</html>
