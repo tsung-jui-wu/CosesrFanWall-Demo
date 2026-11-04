@@ -1,10 +1,10 @@
 <!doctype html>
-<html lang="en">
+<html lang="en" class="i18n-pending">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="robots" content="noindex">
-  <title>Send a thank-you · FanWall</title>
+  <title data-i18n="fan.docTitle"></title>
   <link rel="icon" href="/favicon.svg" type="image/svg+xml">
   <link rel="stylesheet" href="/css/app.css">
 </head>
@@ -12,17 +12,20 @@
   <main>
     <header class="topbar">
       <span class="wordmark">FanWall</span>
-      <span class="chip" id="event-name"></span>
+      <div class="topbar-end">
+        <span class="chip" id="event-name"></span>
+        <div class="lang-switch" data-lang-switch></div>
+      </div>
     </header>
     <section class="spotlight fan-hero" id="hero" aria-labelledby="title">
       <p class="eyebrow" id="character" hidden></p>
-      <h1 id="title">Send a thank-you</h1>
-      <p class="lead" id="lead">A photo, a note, or both.</p>
+      <h1 id="title" data-i18n="fan.title"></h1>
+      <p class="lead" id="lead" data-i18n="fan.lead"></p>
     </section>
 
     <p class="notice" id="queue-banner" role="status" hidden></p>
 
-    <section id="view-loading"><p class="muted">Loading…</p></section>
+    <section id="view-loading"><p class="muted" data-i18n="common.loading"></p></section>
 
     <section id="view-error" class="panel" hidden>
       <h2 id="error-title"></h2>
@@ -31,37 +34,38 @@
 
     <form id="view-form" novalidate hidden>
       <section class="panel" aria-labelledby="photo-h">
-        <h2 id="photo-h">Photo <span class="opt">Optional</span></h2>
+        <h2 id="photo-h"><span data-i18n="fan.photo.heading"></span> <span class="opt" data-i18n="common.optional"></span></h2>
         <div id="preview" class="preview" hidden>
-          <img id="preview-img" alt="The photo you picked">
-          <p id="preview-missing" class="muted small" hidden>Preview isn't available for this file, but it will still be sent.</p>
+          <img id="preview-img" alt="" data-i18n-alt="fan.photo.previewAlt">
+          <p id="preview-missing" class="muted small" hidden data-i18n="fan.photo.previewMissing"></p>
           <div class="row">
-            <button type="button" id="photo-edit">Edit photo</button>
-            <button type="button" id="photo-remove">Remove photo</button>
+            <button type="button" id="photo-edit" data-i18n="fan.photo.edit"></button>
+            <button type="button" id="photo-remove" data-i18n="fan.photo.remove"></button>
           </div>
         </div>
         <div id="photo-pick" class="photo-pick">
           <input class="visually-hidden" type="file" id="photo-camera" accept="image/*" capture="environment">
-          <label class="button primary" for="photo-camera">Take a photo</label>
+          <label class="button primary" for="photo-camera" data-i18n="fan.photo.take"></label>
           <input class="visually-hidden" type="file" id="photo-library" accept="image/*">
-          <label class="button" for="photo-library">Choose a photo</label>
+          <label class="button" for="photo-library" data-i18n="fan.photo.choose"></label>
         </div>
-        <p id="photo-busy" class="muted small" hidden>Preparing photo…</p>
+        <p id="photo-busy" class="muted small" hidden data-i18n="fan.photo.busy"></p>
       </section>
 
       <section class="panel" aria-labelledby="msg-h">
-        <h2 id="msg-h">Message <span class="opt">Optional</span></h2>
-        <label for="message" class="visually-hidden">Message</label>
+        <h2 id="msg-h"><span data-i18n="fan.message.heading"></span> <span class="opt" data-i18n="common.optional"></span></h2>
+        <label for="message" class="visually-hidden" data-i18n="fan.message.heading"></label>
         <!-- No maxlength: it counts UTF-16 units, so emoji would hit it early. The server counts characters. -->
-        <textarea id="message" rows="4" placeholder="Say thanks, share a moment…" aria-describedby="counter"></textarea>
+        <textarea id="message" rows="4" data-i18n-placeholder="fan.message.placeholder" aria-describedby="counter"></textarea>
         <p class="counter" id="counter">0 / 280</p>
         <div class="field">
-          <label for="name">Your name <span class="muted">· optional</span></label>
+          <label for="name"><span data-i18n="fan.name.label"></span> <span class="muted" data-i18n="common.optionalInline"></span></label>
           <input id="name" type="text" maxlength="40" autocomplete="nickname">
         </div>
-        <label class="check"><input id="credit" type="checkbox"> <span id="credit-text">Credit me by name</span></label>
+        <label class="check"><input id="credit" type="checkbox"> <span id="credit-text" data-i18n="fan.credit"></span></label>
       </section>
 
+      <!-- The consent words come from lib/consent.js (through the API), not from the catalogs. -->
       <section class="panel consent" aria-labelledby="consent-title">
         <h2 id="consent-title"></h2>
         <dl id="consent-points"></dl>
@@ -69,21 +73,21 @@
       </section>
 
       <p class="form-error" id="form-error" role="alert"></p>
-      <button class="primary big" type="submit" id="send">Send</button>
+      <button class="primary big" type="submit" id="send" data-i18n="fan.send"></button>
     </form>
 
     <section id="view-sending" class="panel" hidden>
-      <h2>Sending…</h2>
+      <h2 data-i18n="fan.sending.title"></h2>
       <progress id="progress" max="1"></progress>
-      <p class="muted small">Keep this page open until it's done.</p>
+      <p class="muted small" data-i18n="fan.sending.keepOpen"></p>
     </section>
 
     <section id="view-waiting" class="panel" hidden>
-      <h2>Waiting for a connection</h2>
-      <p id="waiting-text">We couldn't reach the server. Keep this page open and we'll send it automatically.</p>
+      <h2 data-i18n="fan.waiting.title"></h2>
+      <p id="waiting-text" data-i18n="fan.waiting.text"></p>
       <div class="row">
-        <button type="button" id="retry-now">Try now</button>
-        <button type="button" id="write-another">Write another while waiting</button>
+        <button type="button" id="retry-now" data-i18n="fan.waiting.retryNow"></button>
+        <button type="button" id="write-another" data-i18n="fan.waiting.writeAnother"></button>
       </div>
     </section>
 
@@ -92,29 +96,29 @@
         <div class="tick" aria-hidden="true">
           <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#000" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg>
         </div>
-        <h2>Sent! Thank you.</h2>
+        <h2 data-i18n="fan.done.title"></h2>
         <p id="done-text"></p>
       </div>
       <div class="panel">
-        <p class="small muted">Your delete code. It's saved on this device, but write it down if you might want to delete this from somewhere else:</p>
+        <p class="small muted" data-i18n="fan.done.codeIntro"></p>
         <p class="code" id="done-code"></p>
         <div class="row fill">
-          <button type="button" id="copy-code">Copy code</button>
-          <button type="button" class="primary" id="send-another">Send another</button>
+          <button type="button" id="copy-code" data-i18n="fan.done.copyCode"></button>
+          <button type="button" class="primary" id="send-another" data-i18n="fan.done.sendAnother"></button>
         </div>
       </div>
     </section>
 
     <section class="panel" id="mine" aria-labelledby="mine-h">
-      <h2 id="mine-h">Sent from this device</h2>
+      <h2 id="mine-h" data-i18n="fan.mine.heading"></h2>
       <ul id="mine-list" class="mine-list"></ul>
-      <p id="mine-empty" class="muted small">Nothing yet.</p>
+      <p id="mine-empty" class="muted small" data-i18n="fan.mine.empty"></p>
       <details>
-        <summary>Delete with a code</summary>
+        <summary data-i18n="fan.mine.deleteWithCode"></summary>
         <form id="code-form" class="row">
-          <label for="code-input" class="visually-hidden">Delete code</label>
+          <label for="code-input" class="visually-hidden" data-i18n="fan.mine.codeLabel"></label>
           <input id="code-input" type="text" autocomplete="off" autocapitalize="characters" spellcheck="false" placeholder="XXXX-XXXX-XXXX">
-          <button type="submit" class="danger">Delete</button>
+          <button type="submit" class="danger" data-i18n="common.delete"></button>
         </form>
       </details>
     </section>

@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="en">
+<html lang="en" class="i18n-pending">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -12,31 +12,31 @@
   <main>
     <header class="topbar">
       <span class="wordmark">FanWall</span>
+      <div class="lang-switch" data-lang-switch></div>
     </header>
     <section class="spotlight" aria-labelledby="hero-h">
       <h1 id="hero-h">FanWall</h1>
-      <p class="lead">Collect photos and thank-you notes from fans for each guest cosplayer, moderate them,
-        then give each cosplayer one calm link that plays them back as a mosaic.</p>
+      <p class="lead" data-i18n="landing.lead"></p>
     </section>
 
     <section class="panel" aria-labelledby="create-h">
-      <h2 id="create-h">Create an event</h2>
+      <h2 id="create-h" data-i18n="landing.create.heading"></h2>
       <form id="create">
         <div class="field">
-          <label for="name">Event name</label>
+          <label for="name" data-i18n="landing.create.name"></label>
           <input id="name" name="name" type="text" maxlength="80" required autocomplete="off">
         </div>
         <div class="field">
-          <label for="retention">Keep submissions for (days after the event closes)</label>
+          <label for="retention" data-i18n="admin.settings.retention"></label>
           <input id="retention" name="retentionDays" type="number" min="1" max="90" value="30" required>
-          <p class="small muted">Nothing is kept longer than 90 days after upload, whatever you choose.</p>
+          <p class="small muted" data-i18n="admin.settings.retentionNote"></p>
         </div>
         <div class="field" id="key-field" hidden>
-          <label for="key">Create key</label>
+          <label for="key" data-i18n="landing.create.key"></label>
           <input id="key" name="key" type="password" autocomplete="off">
-          <p class="small muted">This host asks for a key before new events can be made.</p>
+          <p class="small muted" data-i18n="landing.create.keyNote"></p>
         </div>
-        <button class="primary" type="submit">Create event</button>
+        <button class="primary" type="submit" data-i18n="landing.create.submit"></button>
       </form>
     </section>
   </main>

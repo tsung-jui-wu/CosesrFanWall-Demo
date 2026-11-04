@@ -1,4 +1,5 @@
 // Small fetch + DOM helpers shared by the pages.
+import { t, errorKey } from './i18n.js';
 
 // The view-only demo (scripts/export-static.js, for GitHub Pages) marks its pages <html data-static>.
 // There is no server there: reads come from pre-built JSON files, and a few changes are kept on the
@@ -16,26 +17,25 @@ export function segmentAfter(name) {
   return i < 0 ? '' : decodeURIComponent(parts[i + 1] || '');
 }
 
-export const VIEW_ONLY = "This is a view-only demo, so that's turned off.";
-
 // Changes that make sense to try in the demo, answered the way the server would; nothing is stored.
 const LOCAL_CHANGES = [
   [/^\/api\/reveal\/[^/]+\/items\/[^/]+\/edit$/, 'POST', (body) => ({ edit: body.edit })],
-  [/^\/api\/reveal\/[^/]+\/items\/[^/]+$/, 'POST', (body) => ({ hidden: body.hidden })],
+  [/^\/api\/reveal\/[^/]+\/items\/[^/]+$/, 'POST', (body) => ({ hidden: body.hidden, favorite: body.favorite })],
   [/^\/api\/reveal\/[^/]+\/items\/[^/]+$/, 'DELETE', () => ({ ok: true })],
   [/^\/api\/reveal\/[^/]+\/optout$/, 'POST', () => ({ ok: true })],
   [/^\/api\/admin\/[^/]+\/submissions\/[^/]+$/, 'PATCH', (body) => ({ status: body.status })],
   [/^\/api\/admin\/[^/]+\/submissions\/bulk$/, 'POST', (body) => ({ updated: body.ids })],
+  [/^\/api\/admin\/[^/]+\/cosplayers\/[^/]+$/, 'PATCH', (body) => ({ style: body.style })],
 ];
 
 async function staticApi(path, method, json) {
   if (method === 'GET') {
     const res = await fetch(`${path.replace(/^\//, '')}.json`);
-    if (!res.ok) throw Object.assign(new Error('This link is not part of the demo.'), { status: res.status });
+    if (!res.ok) throw apiError({ error: 'demo_missing' }, res.status);
     return res.json();
   }
   const hit = LOCAL_CHANGES.find(([re, m]) => m === method && re.test(path));
-  if (!hit) throw new Error(VIEW_ONLY);
+  if (!hit) throw apiError({ error: 'view_only' }, 0);
   return hit[2](json ?? {});
 }
 
@@ -47,8 +47,15 @@ export async function api(path, { method = 'GET', json, form } = {}) {
     body: json === undefined ? form : JSON.stringify(json),
   });
   const data = res.headers.get('content-type')?.includes('application/json') ? await res.json() : null;
-  if (!res.ok) throw Object.assign(new Error(data?.error || `Request failed (${res.status}).`), { status: res.status });
+  if (!res.ok) throw apiError(data, res.status);
   return data;
+}
+
+// The server answers with an error code. The Error's message is already in the page language;
+// key and vars let a caller show it with setText, so it follows a language switch.
+export function apiError(body, status) {
+  const { key, vars } = errorKey(body, status);
+  return Object.assign(new Error(t(key, vars)), { status, key, vars });
 }
 
 export async function loadBitmap(url) {
@@ -85,11 +92,12 @@ export function toast(message, { error = false } = {}) {
 }
 
 // The clipboard API needs HTTPS (or localhost); elsewhere fall back to a prompt the person can copy from.
+// what: 'link' or 'code'.
 export async function copyText(text, what = 'link') {
   try {
     await navigator.clipboard.writeText(text);
-    toast(`${what[0].toUpperCase()}${what.slice(1)} copied.`);
+    toast(t(`copy.${what}.done`));
   } catch {
-    window.prompt(`Copy this ${what}:`, text);
+    window.prompt(t(`copy.${what}.prompt`), text);
   }
 }
