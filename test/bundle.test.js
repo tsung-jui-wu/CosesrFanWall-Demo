@@ -19,6 +19,7 @@ test('manifest: one entry per item, credits only when given, paths for each file
     event: { name: 'Con <x>', date: '2026-11-03' },
     cosplayer: { name: 'Aki' },
     revealStyle: 'mosaic',
+    picture: null,
     items: [
       { type: 'photo', file: 'photos/photo-0001.jpg', thumb: 'thumbs/photo-0001.jpg', edited: false, credit: 'Mika', note: null, favorite: false },
       {
@@ -79,4 +80,9 @@ test('a bundle of notes only says so and has no photo hint', () => {
   });
   assert.match(html, /Notes from your fans at E/);
   assert.doesNotMatch(html, /Tap a photo/);
+});
+
+test('the picture is listed only when the bundle carries one', () => {
+  assert.equal(plan().manifest.picture, null);
+  assert.equal(plan({ picture: true }).manifest.picture, 'picture.jpg');
 });

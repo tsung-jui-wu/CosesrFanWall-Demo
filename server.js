@@ -452,9 +452,12 @@ app.get('/api/reveal/:token/download.zip', downloadLimit, async (req, res) => {
     const photo = Boolean(s.file) && fs.existsSync(mediaPath(`${s.file}.jpg`));
     if (photo || s.message) kept.push({ s, photo });
   }
+  // The mosaic's picture (theirs, else the event's), so the year in review can draw the mosaic again.
+  const baseImage = c.baseImage || ev.baseImage;
+  const picture = baseImage && fs.existsSync(mediaPath(`base_${baseImage}.jpg`)) ? mediaPath(`base_${baseImage}.jpg`) : null;
   const plan = planBundle({
     event: ev, cosplayer: c, lang, tz: Number.isInteger(tz) && Math.abs(tz) <= 840 ? tz : 0, revealStyle: styleFor(ev, c),
-    fallbackDate: ev.closedAt ?? ev.createdAt,
+    fallbackDate: ev.closedAt ?? ev.createdAt, picture: Boolean(picture),
     items: kept.map(({ s, photo }) => ({
       message: s.message, credit: s.credit && s.name ? s.name : '', photo, edited: photo && Boolean(s.edit),
       favorite: Boolean(s.favorite), createdAt: s.createdAt,
@@ -477,6 +480,7 @@ app.get('/api/reveal/:token/download.zip', downloadLimit, async (req, res) => {
     }
     entries.push({ name: `thumbs/${photo}`, data: () => renderThumb(file, edit) });
   });
+  if (picture) entries.push({ name: 'picture.jpg', path: picture });
   res.set({
     'Content-Type': 'application/zip',
     'Content-Disposition': `attachment; filename="fanwall-${asciiSlug(c.name) || 'photos'}.zip"`,

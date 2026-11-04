@@ -23,10 +23,11 @@ later source of the same bundle. Write readers against this document, not agains
 | `photos/photo-NNNN.jpg` | Each photo at full size (up to 2560 px on the long side). If the cosplayer edited it, this is the edited version. |
 | `thumbs/photo-NNNN.jpg` | The same photo, edited if it was, at most 600 px on the long side, for grids. |
 | `unedited/photo-NNNN.jpg` | Only for edited photos: the photo as the fan sent it (after FanWall's re-encode; never the raw upload). |
+| `picture.jpg` | Only when the reveal had one: the picture the mosaic assembles into (the cosplayer's own image, or the event's). Lets a reader draw the mosaic again. |
 
 `NNNN` counts photos from `0001` in upload order. Notes without a photo have no files.
 
-The mosaic image isn't in the bundle. It's drawn in the browser, and the reveal page's **Save image** saves it.
+The finished mosaic image isn't in the bundle: it's drawn in the browser, and the reveal page's **Save image** saves it. A reader can draw it again from `picture.jpg` and the thumbnails.
 
 ## `manifest.json`
 
@@ -37,6 +38,7 @@ The mosaic image isn't in the bundle. It's drawn in the browser, and the reveal 
   "event": { "name": "FanWall Demo Con", "date": "2026-11-03" },
   "cosplayer": { "name": "Yuki" },
   "revealStyle": "mosaic",
+  "picture": "picture.jpg",
   "items": [
     { "type": "photo", "file": "photos/photo-0001.jpg", "thumb": "thumbs/photo-0001.jpg", "edited": false, "credit": "Mika", "note": null, "favorite": true },
     { "type": "photo", "file": "photos/photo-0002.jpg", "thumb": "thumbs/photo-0002.jpg", "unedited": "unedited/photo-0002.jpg", "edited": true, "credit": null, "note": "Best cosplay of the con!", "favorite": false },
@@ -52,7 +54,8 @@ The mosaic image isn't in the bundle. It's drawn in the browser, and the reveal 
 | `event.name` | string | The event's name. |
 | `event.date` | `"YYYY-MM-DD"` | The day the event's first item in this bundle arrived, on the cosplayer's own calendar (their browser's time zone when they downloaded). With no items it falls back to when the event closed, or was created, in UTC. Good for sorting and grouping by year. It's not the official event date, and it has no time of day. |
 | `cosplayer.name` | string | The cosplayer's name as the organizer entered it. |
-| `revealStyle` | string | The reveal style the event used. Always `"mosaic"` for now; more styles are planned. Unknown values should be treated as `"mosaic"`. |
+| `revealStyle` | string | This cosplayer's reveal style: `"mosaic"`, `"polaroid"` or `"constellation"` today. More may be added: draw an unknown value as `"mosaic"`, and a mosaic without `picture` as a wall of photos. |
+| `picture` | path or `null` | The mosaic's picture (`picture.jpg`), when there was one. Added after schema 1 shipped (additive): treat a missing value as `null`. |
 | `items` | array | Everything the cosplayer could see when they downloaded, in upload order. Hidden items aren't here; neither is anything that wasn't approved. |
 | `items[].type` | `"photo"` or `"note"` | A photo (which may also have a note), or a note on its own. |
 | `items[].file` | path | Photos only: the full-size photo. |

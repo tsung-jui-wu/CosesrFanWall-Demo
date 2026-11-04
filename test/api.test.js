@@ -484,7 +484,7 @@ test('hide, unhide, and delete; hidden items stay out of the zip', async () => {
   assert.equal(res.headers.get('content-type'), 'application/zip');
   assert.match(res.headers.get('content-disposition'), /^attachment; filename="fanwall-aki\.zip"$/);
   const files = readZip(Buffer.from(await res.arrayBuffer()));
-  assert.deepEqual(files.map((x) => x.name), ['index.html', 'manifest.json', 'messages.txt', 'photos/photo-0001.jpg', 'thumbs/photo-0001.jpg'], 'hidden photo left out');
+  assert.deepEqual(files.map((x) => x.name), ['index.html', 'manifest.json', 'messages.txt', 'photos/photo-0001.jpg', 'thumbs/photo-0001.jpg', 'picture.jpg'], 'hidden photo left out');
   const byName = Object.fromEntries(files.map((x) => [x.name, x.data]));
   const text = byName['messages.txt'].toString('utf8');
   assert.match(text, /\[photo-0001\.jpg\] You were amazing \(from Mika\)/);
@@ -590,6 +590,7 @@ test('the zip has edited photos, turned the same way as the preview, plus the un
     'photos/photo-0001.jpg', 'thumbs/photo-0001.jpg',
     'photos/photo-0002.jpg', 'unedited/photo-0002.jpg', 'thumbs/photo-0002.jpg',
     'photos/photo-0003.jpg', 'unedited/photo-0003.jpg', 'thumbs/photo-0003.jpg',
+    'picture.jpg',
   ]);
   const byName = Object.fromEntries(files.map((x) => [x.name, x.data]));
   const stored = (sid) => fs.readFileSync(mediaPath(`${db.submissions[sid].file}.jpg`));
