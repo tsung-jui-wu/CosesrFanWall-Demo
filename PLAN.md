@@ -33,12 +33,15 @@ Not started: Milestone 8 (README, accessibility pass, deploy).
 
 ```
 events[id]       { id, name, organizerToken, baseImage|null (file id), open, closedAt|null,
-                   retentionDays (default 30), createdAt }
+                   retentionDays (default 30), lang|null ('en' | 'zh-Hans' | 'zh-Hant': the pages' default),
+                   style ('mosaic' | 'polaroid' | 'constellation': the default for its cosplayers, default mosaic), createdAt }
 cosplayers[id]   { id, eventId, name, character, revealToken, released, optOut,
-                   baseImage|null (own mosaic image; falls back to the event's), baseAt|null, createdAt }
+                   baseImage|null (own mosaic image; falls back to the event's), baseAt|null,
+                   style|null (own reveal style; null = the event's), createdAt }
 submissions[id]  { id, eventId, cosplayerId, file|null (hex id; files are <id>.jpg and <id>_t.jpg),
-                   message, name, credit (bool), consent {v, at}, status 'pending'|'approved'|'rejected',
-                   hidden (cosplayer hid it), edit|null (cosplayer's photo edit, see "Photo editing"),
+                   message, name, credit (bool), consent {v, lang, at} (lang: the language the fan read it in),
+                   status 'pending'|'approved'|'rejected',
+                   hidden (cosplayer hid it), favorite (cosplayer starred it; private to them), edit|null (cosplayer's photo edit, see "Photo editing"),
                    codeHash (sha256 of fan delete code), createdAt }
 ```
 
@@ -54,6 +57,7 @@ Pages (static HTML, `Cache-Control: no-store` for token pages):
 | `/e/:eventId/c/:cosplayerId` | fan upload page (QR target) |
 | `/admin/:token` | organizer dashboard |
 | `/admin/:token/print/:cosplayerId` | printable QR sign |
+| `/admin/:token/preview/:cosplayerId` | the organizer's preview of that reveal page, view-only |
 | `/r/:revealToken` | cosplayer reveal and controls |
 
 API:
@@ -61,13 +65,15 @@ API:
 | Method and path | Purpose |
 |---|---|
 | `POST /api/events` | create event `{name, retentionDays?, key?}` (optional `CREATE_KEY` env gate); returns admin path |
-| `GET /api/fan/:eid/:cid` | event name, cosplayer name, consent copy, open state |
-| `POST /api/fan/:eid/:cid/submit` | multipart: `photo?`, `message?` (max 280), `name?` (max 40), `credit`, `consent=1`; needs photo or message; returns `{id, deleteCode}` |
+| `GET /api/fan/:eid/:cid` | event name and default language, cosplayer name, consent copy in every language, open state |
+| `POST /api/fan/:eid/:cid/submit` | multipart: `photo?`, `message?` (max 280), `name?` (max 40), `credit`, `consent=1`, `consentLang`; needs photo or message; returns `{id, deleteCode}` |
 | `POST /api/fan/delete` | `{id, code}` fan self-delete |
 | `GET /api/admin/:token` | event, cosplayers (with counts and reveal links), submissions |
-| `PATCH /api/admin/:token/event` | `{name?, open?, retentionDays?}`; setting `open:false` stamps `closedAt` |
+| `PATCH /api/admin/:token/event` | `{name?, open?, retentionDays?, lang?, style?}`; setting `open:false` stamps `closedAt`; `lang: null` clears the default |
 | `POST /api/admin/:token/base` | upload mosaic base image (multipart `image`) |
 | `POST /api/admin/:token/cosplayers` | add cosplayer `{name, character?}` |
+| `PATCH /api/admin/:token/cosplayers/:cid` | `{style}`: their own reveal style, or `null` for the event default |
+| `GET /api/admin/:token/cosplayers/:cid/preview` | the organizer's view-only preview: the reveal data as if released (approved items only), plus their seed so the layout matches |
 | `DELETE /api/admin/:token/cosplayers/:cid` | remove cosplayer and their content |
 | `PATCH /api/admin/:token/submissions/:id` | `{status}` approve or reject |
 | `POST /api/admin/:token/submissions/bulk` | `{ids, status}` |
@@ -76,13 +82,15 @@ API:
 | `POST /api/admin/:token/cosplayers/:cid/base` | upload this cosplayer's own mosaic image (multipart `image`) |
 | `DELETE /api/admin/:token/cosplayers/:cid/base` | go back to the event image |
 | `GET /api/admin/:token/qr/:cid.svg` | QR code for the fan URL (uses `PUBLIC_URL` or request host) |
-| `GET /api/reveal/:token` | `{ready, event, cosplayer, items[]}`; items are approved only, each with `hidden` flag and `edit` |
-| `POST /api/reveal/:token/items/:id` | `{hidden}` |
+| `GET /api/reveal/:token` | `{ready, event, cosplayer, items[], savedUntil}`; items are approved only, each with `hidden` flag and `edit`; `savedUntil` is when the first item that isn't hidden will be purged (null if none) |
+| `POST /api/reveal/:token/items/:id` | `{hidden}` and/or `{favorite}`; answers with the new `savedUntil` (so does DELETE) |
 | `POST /api/reveal/:token/items/:id/edit` | `{edit}` (or `{edit: null}` to undo); photos only; validated by `normalizeEdit` |
 | `DELETE /api/reveal/:token/items/:id` | remove permanently |
 | `POST /api/reveal/:token/optout` | delete all content for this cosplayer (including their own mosaic image), set `optOut`, fan page closes |
-| `GET /api/reveal/:token/download.zip` | all visible photos plus `messages.txt` (with credits), streamed via `lib/zip.js`; edited photos are rendered with the edit, with the unedited copy under `unedited/` |
+| `GET /api/reveal/:token/download.zip?lang=&tz=&only=favorites` | `only=favorites` keeps just the starred items. "Download all", the cosplayer's keepsake (`lib/bundle.js`, format in `BUNDLE-FORMAT.md`): offline gallery `index.html`, `manifest.json`, `messages.txt`, all visible photos, and 600 px `thumbs/`, streamed via `lib/zip.js`. Its own words are in `lang`; `tz` (the browser's `getTimezoneOffset()`) sets the event date's calendar day. Edited photos are rendered with the edit, with the unedited copy under `unedited/`. The mosaic image isn't included (it's drawn in the browser; "Save image" saves it) |
 | `GET /media/:file` | serve `<hex32>.jpg`, `<hex32>_t.jpg`, `base_<hex32>.jpg` only (regex-checked) |
+
+Errors are codes, never sentences: `{error: 'too_long', field: 'message', max: 280}`. The pages translate them (`error.*` in the catalogs). A bad organizer link still gets its page, with a 404, so the page can say so in the visitor's language.
 
 Server behavior: `X-Content-Type-Options: nosniff`, `Referrer-Policy: no-referrer`, `X-Frame-Options: DENY`, `robots.txt` disallowing all, `X-Robots-Tag: noindex` on media, per-IP in-memory rate limits (submit about 15 per 10 min; create event about 10 per hour), `trust proxy` via env, cap of about 1500 submissions per cosplayer, multer limit 12 MB and image mimetypes only, sharp `limitInputPixels`, hourly `purgeExpired()` plus one run at boot.
 
@@ -116,9 +124,8 @@ Functions:
 3. `targetCells(rgba, cols, rows)`: returns `{features: Float32Array(cols*rows*12), meanRGB: Uint8Array(cols*rows*3)}`.
 4. `chooseGrid(n, aspect, opts)`: `reuse = max(n<800 ? 2 : 1.5, min(6, 900/n))`; `cells = clamp(n*reuse, 60, 2400)`; derive `cols,rows` from aspect; returns `{cols, rows}`. (The first rule, `3 if n<200`, gave 150 photos a chunky ~450-cell grid. Smaller sets now reuse photos up to 6x to reach ~900 cells; past ~1000 cells a phone shows little more detail.)
 5. `planMosaic({cols, rows, cellFeatures, meanRGB, tiles:[{id, feature}], opts, seed})`, deterministic via seeded RNG (mulberry32):
-   - `n < minTiles (12)`: return `{mode:'float', cells:[], leftover: all ids}`. The renderer shows the base image dimmed with items drifting around it.
-   - Otherwise `coverage = clamp(n / 60, 0.3, 1)`.
-   - Saliency per cell = ΔE between the cell mean and the *nearest* border cell's mean. (The first version used the average border color, which fails on gradient backgrounds: the average is a mid tone, so plain bands at either end looked salient.) Fill the top `coverage` fraction of cells; the rest remain "ghost" (the base image, faded). This is the smooth blend: with few photos, the subject fills first.
+   - Always full (decided 2026-11-03, open question 1): every cell gets a tile from 1 photo up, reusing a small set across the grid; no ghost cells and no float mode. `chooseGrid` keeps at least 6 cells each way, so no tile is over a sixth of the picture.
+   - Saliency per cell = ΔE between the cell mean and the *nearest* border cell's mean. (The first version used the average border color, which fails on gradient backgrounds: the average is a mid tone, so plain bands at either end looked salient.) It orders the fly-in: the subject arrives first.
    - `maxReuse = max(opts.maxReuse ?? 2, ceil(filledCells / n))`.
    - Visit filled cells in seeded-shuffled order. Cost for tile t at cell c = mean over quadrants of ΔE76(cellQuad, tileQuad) + `usagePenalty * usage[t]` + a proximity penalty that grows when the same tile already sits within `minSpacing` (default 4) cells. Pick the lowest cost among tiles with `usage < maxReuse`.
    - Per cell output: `{col, row, tileId|null, tint: {rgb, alpha}}` where `alpha = clamp(cost/50, 0.08, 0.5)`. The renderer overlays the target mean color at that alpha so the likeness sharpens without hiding the photo.
@@ -130,14 +137,14 @@ Tests (`test/mosaic.test.js`) with synthetic data (red disc on blue background; 
 - Deterministic for the same seed.
 - Mean ΔE of the plan is clearly lower than random assignment.
 - No tile exceeds `maxReuse`; same-tile spacing respected when enough tiles exist.
-- `n=5` gives `mode:'float'`; `n=30` gives coverage below 1 with the disc area filled first.
+- Every cell is filled for n = 1 to 30; the fly-in starts on the disc.
 - `leftover` plus used ids equals all tile ids.
 
 ## Pages
 
 **Fan page** (mobile-first, 30-second flow): cosplayer name and event; choose or take photo (`<input type=file accept=image/* capture>` optional); client-side resize to 2560 px before upload (also helps bad venue Wi-Fi); optional "Edit photo" (rotate, crop, Auto, sliders; see Photo editing); optional message with counter; optional name plus "credit me" toggle; consent text visible, required checkbox; upload with retry queue (IndexedDB or in-memory with retry on `online`); success screen with the delete code (copy button) and "send another".
 
-**Organizer dashboard**: event settings (name, retention, open/closed); upload base image with preview; add cosplayers; per cosplayer: counts (pending, approved), QR SVG download, "Print sign" page, Release toggle, copy reveal link; moderation grid with large thumbnails, keyboard shortcuts (A approve, R reject, arrows), bulk approve, filter by cosplayer and status; message items shown as cards.
+**Organizer dashboard**: home has the event header, the overview numbers, and three tabs: Cosplayers (a folder card per cosplayer with their mosaic image on top, release state, and counts, plus an add card), Review (the moderation grid for everyone: large thumbnails, keyboard shortcuts A approve, R reject, arrows, bulk approve, filter by cosplayer and status, notes as cards), and Settings (event settings and the event mosaic image). Each cosplayer has their own page (`#c/<id>`): their image as a banner with buttons to change it, then tabs for Review (theirs only) and Links and sign (release toggle, reveal link, QR preview and download, print sign, fan link, remove). Views live in the address's #, so back and bookmarks work.
 
 **Print sign**: big QR, cosplayer name, one line of copy, event name; print stylesheet.
 
@@ -156,6 +163,14 @@ Dark everywhere except the printed sign. Tokens live at the top of `public/css/a
 - Geist (headings, tight negative tracking) and Inter (text), both SIL OFL, **self-hosted** in `public/fonts/` with their licenses. No font requests to other sites.
 - On phones, the reveal's Manage drawer and the photo editor are bottom sheets.
 - Reveal layout: landscape puts notes in a column on each side of the mosaic; portrait (phones) puts the mosaic full width under the title with the notes in a grid below it, so there are no empty bands.
+
+## Languages (English, Simplified Chinese, Traditional Chinese)
+
+- Catalogs: `public/locales/en.json`, `zh-Hans.json`, `zh-Hant.json`. Flat keys that name meanings (`fan.send`), `{placeholders}`, plural forms as `key.one` / `key.other`. `_meta.status` says whether a catalog is reviewed. The Chinese ones are Claude drafts (mainland usage for Simplified, Taiwan usage for Traditional) until a native reader has been through them.
+- `public/js/i18n-core.js` (pure, shared with the server) and `public/js/i18n.js` (the pages' `t(key, vars)`, `data-i18n` attributes, the switcher, `Intl` dates). No library, no build step. `test/i18n.test.js` checks identical keys, no empty values, matching placeholders, and that every key the code uses exists.
+- Which language: the person's own pick (localStorage only), else the browser when it asks for English or Chinese (zh-TW, zh-HK, zh-MO to Traditional; zh-CN, zh-SG, bare zh to Simplified), else the event's default, else English. The print sign puts the event default first, and remembers its own pick apart from the dashboard's.
+- Consent wording stays in `lib/consent.js`, in all three languages. Fans' notes are never translated.
+- Fonts: system CJK stacks in `--font-cjk`, chosen by `data-cjk` so Simplified and Traditional get their own glyph shapes. The reveal canvas reads `--font-body`, so notes drawn there match the page. "Mosaic" is 照片拼贴 / 照片拼貼, never 马赛克 / 馬賽克 (which usually means a censor blur).
 
 ## Photo editing (`public/js/edit.js`)
 
@@ -176,7 +191,9 @@ Cosplayers at the same event compare reveals, and fan counts differ a lot. The a
 - No counts, rankings, or comparisons on fan-facing or cosplayer-facing pages. The reveal says "Photos and notes from your fans", never a number. Counts are for the organizer dashboard only.
 - Each cosplayer can have their own mosaic image (for example, a photo of them in costume, used with their OK), so reveals aren't the same picture at different levels of completion. It follows the same retention rule as submissions and is deleted with the cosplayer.
 - "Release all" lets the organizer give everyone their link at the same moment.
-- Open question: always fill the whole mosaic (coarser grid, more reuse) instead of leaving ghost cells when photos are few.
+- Every reveal style always looks full (decided 2026-11-03): the number of cells, prints or stars depends on the screen, never on how many photos arrived. Few photos are reused; many take turns.
+- Reveal styles (`public/js/styles.js`): mosaic, polaroid wall (`polaroid.js`), constellation (`constellation.js`), each with a pure seeded planner; drawing in `art.js` and `reveal.js`. The event sets the default and each cosplayer may get their own (decided 2026-11-03, replacing "per event only"; cosplayers at one event may now see different styles). A mosaic without a picture falls back to the wall; a page with notes only floats them and has no Save image.
+- Save image holds the picture only: photos no larger than 1/6 of the image (`EXPORT_MAX_PHOTO`) and never notes or names, which fans did not consent to posting.
 
 ## Demo seed (`scripts/seed-demo.js [count=150]`)
 

@@ -8,6 +8,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import QRCode from 'qrcode';
+import { STYLE_IDS, DEFAULT_STYLE } from '../public/js/styles.js';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const PUBLIC = path.join(ROOT, 'public');
@@ -64,9 +65,14 @@ const write = (rel, data) => {
   fs.writeFileSync(file, typeof data === 'string' || Buffer.isBuffer(data) ? data : JSON.stringify(data));
 };
 
+// A real event uses the one style its organizer picks; the demo shows every released cosplayer in
+// each style too (r/<slug>-polaroid/, r/<slug>-constellation/), with the same items.
+const VARIANTS = STYLE_IDS.filter((s) => s !== DEFAULT_STYLE);
 for (const c of cosplayers) {
   const slug = slugOf.get(c.id);
-  write(`api/reveal/${slug}.json`, relink(await get(`/api/reveal/${c.revealToken}`)));
+  const reveal = relink(await get(`/api/reveal/${c.revealToken}`));
+  write(`api/reveal/${slug}.json`, reveal);
+  if (reveal.ready) for (const style of VARIANTS) write(`api/reveal/${slug}-${style}.json`, { ...reveal, event: { ...reveal.event, style } });
   write(`api/fan/demo/${slug}.json`, relink(await get(`/api/fan/${ev.id}/${c.id}`)));
 }
 const admin = relink(await get(`/api/admin/${ev.organizerToken}`));
@@ -87,33 +93,36 @@ server.close();
 function page(template, rel, { banner = false } = {}) {
   const depth = rel.split('/').length - 1;
   let html = fs.readFileSync(path.join(PUBLIC, template), 'utf8')
-    .replace('<html lang="en">', '<html lang="en" data-static>')
+    .replace('<html ', '<html data-static ')
     .replace('<meta charset="utf-8">', `<meta charset="utf-8">\n  <base href="${'../'.repeat(depth) || './'}">`)
     .replace(/(href|src)="\//g, '$1="');
-  if (banner) html = html.replace(/<body([^>]*)>/, '<body$1>\n  <p class="demo-banner">View-only demo · <a href="">all demo pages</a></p>');
+  if (banner) {
+    html = html.replace(/<body([^>]*)>/, '<body$1>\n  <p class="demo-banner"><span data-i18n="demo.banner"></span> · <a href="" data-i18n="demo.allPages"></a></p>');
+  }
   write(rel, html);
 }
+const released = new Set(cosplayers.filter((c) => c.released).map((c) => slugOf.get(c.id)));
 for (const [, slug] of slugOf) {
   page('reveal.html', `r/${slug}/index.html`);
+  if (released.has(slug)) for (const style of VARIANTS) page('reveal.html', `r/${slug}-${style}/index.html`);
   page('fan.html', `e/demo/c/${slug}/index.html`, { banner: true });
   page('print.html', `admin/demo/print/${slug}/index.html`, { banner: true });
 }
 page('admin.html', 'admin/demo/index.html', { banner: true });
 
 const name = (slug) => cosplayers.find((c) => slugOf.get(c.id) === slug)?.name ?? slug;
-const revealCases = [
-  ['yuki', 'Lots of photos of one costume, assembled over their own photo.'],
-  ['aki', 'Lots of photos, assembled over the event image.'],
-  ['mei', 'A few dozen photos: the subject fills in first.'],
-  ['rin', 'Only a handful, so they float instead of making a mosaic.'],
-  ['kai', 'What a cosplayer sees before the organizer releases their page.'],
-].filter(([slug]) => [...slugOf.values()].includes(slug));
+const revealCases = ['yuki', 'aki', 'mei', 'rin', 'sora', 'kai'].filter((slug) => [...slugOf.values()].includes(slug));
+const styleLinks = (slug) => !released.has(slug) ? '' : `<span class="demo-styles">${STYLE_IDS.map((s) =>
+  `<a href="r/${s === DEFAULT_STYLE ? slug : `${slug}-${s}`}/" data-i18n="style.${s}.name"></a>`).join(' · ')}</span>`;
+// The hub's words are in the catalogs too (demo.*), so its switcher works like every other page's.
+const attr = (s) => s.replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;');
+const vars = (v) => `data-i18n-vars="${attr(JSON.stringify(v))}"`;
 write('index.html', `<!doctype html>
-<html lang="en" data-static>
+<html data-static lang="en" class="i18n-pending">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>FanWall demo</title>
+  <title data-i18n="demo.hub.title"></title>
   <link rel="icon" href="favicon.svg" type="image/svg+xml">
   <link rel="stylesheet" href="css/app.css">
 </head>
@@ -121,38 +130,40 @@ write('index.html', `<!doctype html>
   <main>
     <header class="topbar">
       <span class="wordmark">FanWall</span>
-      <span class="chip">View-only demo</span>
+      <div class="topbar-end">
+        <span class="chip" data-i18n="demo.banner"></span>
+        <div class="lang-switch" data-lang-switch></div>
+      </div>
     </header>
     <section class="spotlight" aria-labelledby="hero-h">
       <h1 id="hero-h">FanWall</h1>
-      <p class="lead">Fans send a guest cosplayer photos and thank-you notes at an event. The organizer reviews them,
-        then the cosplayer gets one link that plays them back as a mosaic. Everything here is made-up demo data,
-        and nothing can be sent or saved.</p>
+      <p class="lead" data-i18n="demo.hub.lead"></p>
     </section>
     <section class="panel" aria-labelledby="rev-h">
-      <h2 id="rev-h">The cosplayer's page</h2>
-      <p class="muted">What a cosplayer opens after the event. Press Play, then tap a photo or try Manage and Edit.</p>
+      <h2 id="rev-h" data-i18n="demo.hub.revealHeading"></h2>
+      <p class="muted" data-i18n="demo.hub.revealText"></p>
       <ul class="demo-links">
-${revealCases.map(([slug, text]) => `        <li><a href="r/${slug}/">${name(slug)}</a><span>${text}</span></li>`).join('\n')}
+${revealCases.map((slug) => `        <li><a href="r/${slug}/">${attr(name(slug))}</a><span data-i18n="demo.case.${slug}"></span>${styleLinks(slug)}</li>`).join('\n')}
       </ul>
     </section>
     <section class="panel" aria-labelledby="fan-h">
-      <h2 id="fan-h">The fan page</h2>
-      <p class="muted">What a fan sees after scanning the QR sign. Picking and editing a photo works; sending is off.</p>
-      <ul class="demo-links"><li><a href="e/demo/c/${slugOf.get(cosplayers[0].id)}/">Send ${cosplayers[0].name} a thank-you</a></li></ul>
+      <h2 id="fan-h" data-i18n="demo.hub.fanHeading"></h2>
+      <p class="muted" data-i18n="demo.hub.fanText"></p>
+      <ul class="demo-links"><li><a href="e/demo/c/${slugOf.get(cosplayers[0].id)}/" data-i18n="fan.titleFor" ${vars({ name: cosplayers[0].name })}></a></li></ul>
     </section>
     <section class="panel" aria-labelledby="org-h">
-      <h2 id="org-h">The organizer's dashboard</h2>
-      <p class="muted">Review, approve, and hand out links. Approving and rejecting change this page only.</p>
-      <ul class="demo-links"><li><a href="admin/demo/">Organizer dashboard</a></li></ul>
+      <h2 id="org-h" data-i18n="demo.hub.orgHeading"></h2>
+      <p class="muted" data-i18n="demo.hub.orgText"></p>
+      <ul class="demo-links"><li><a href="admin/demo/" data-i18n="admin.heading"></a></li></ul>
     </section>
   </main>
+  <script type="module" src="js/i18n.js"></script>
 </body>
 </html>
 `);
 
 // 4. Assets. Fonts in app.css are absolute (/fonts/...); here they're relative to the stylesheet.
-for (const dir of ['css', 'js', 'fonts']) fs.cpSync(path.join(PUBLIC, dir), path.join(OUT, dir), { recursive: true });
+for (const dir of ['css', 'js', 'fonts', 'locales']) fs.cpSync(path.join(PUBLIC, dir), path.join(OUT, dir), { recursive: true });
 fs.copyFileSync(path.join(PUBLIC, 'favicon.svg'), path.join(OUT, 'favicon.svg'));
 const css = path.join(OUT, 'css/app.css');
 fs.writeFileSync(css, fs.readFileSync(css, 'utf8').replaceAll('url("/fonts/', 'url("../fonts/'));

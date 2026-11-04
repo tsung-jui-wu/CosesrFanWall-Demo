@@ -1,4 +1,4 @@
-// Demo data: one event, five cosplayers, a synthetic booth image, and `count` synthetic fan photos.
+// Demo data: one event, six cosplayers, a synthetic booth image, and `count` synthetic fan photos.
 // Usage: npm run seed [-- count]   (stop the server first: it keeps the db in memory and would overwrite this)
 import { db, flush, newId, sha256 } from '../lib/store.js';
 import { savePhoto, saveBase } from '../lib/images.js';
@@ -83,7 +83,7 @@ async function addSubmissions(ev, cos, n, statusOf, photoRate = 0.85, makePhoto 
       file: hasPhoto ? await savePhoto(Buffer.from(makePhoto()), { allowSvg: true }) : null,
       message: hasMessage ? pick(MESSAGES) : '',
       name, credit: Boolean(name) && rng() < 0.7,
-      consent: { v: CONSENT_VERSION, at: createdAt },
+      consent: { v: CONSENT_VERSION, lang: 'en', at: createdAt },
       status: statusOf(i), hidden: false,
       codeHash: sha256(newId()), // seeded items have no usable delete code
       createdAt,
@@ -102,7 +102,7 @@ if (running) {
 const now = Date.now();
 const ev = {
   id: newId(), name: 'FanWall Demo Con', organizerToken: newId(24), baseImage: await saveBase(Buffer.from(boothSvg()), { allowSvg: true }),
-  open: true, closedAt: null, retentionDays: 30, createdAt: now,
+  open: true, closedAt: null, retentionDays: 30, lang: null, createdAt: now,
 };
 db.events[ev.id] = ev;
 const mkCos = (name, character, released) => {
@@ -113,7 +113,7 @@ const mkCos = (name, character, released) => {
   db.cosplayers[c.id] = c;
   return c;
 };
-// One cosplayer per reveal case: full mosaic, subject-first partial mosaic, float mode, and the
+// One cosplayer per reveal case: lots of photos, a few dozen, a handful, just three, and the
 // release gate (not released yet). Yuki's fans all photographed one costume, and Yuki has their own image.
 const star = mkCos('Aki', 'Starlight Knight', true);
 const partial = mkCos('Mei', 'Sky Pirate', true);
@@ -122,6 +122,7 @@ const gated = mkCos('Kai', 'Clockwork Mage', false);
 const outfit = mkCos('Yuki', 'Crimson Duelist', true);
 outfit.baseImage = await saveBase(Buffer.from(portraitSvg()), { allowSvg: true });
 outfit.baseAt = now;
+const few = mkCos('Sora', 'Moon Archer', true); // just three photos: every style must still look complete
 
 // Mostly approved with some pending and rejected, so moderation has something to do.
 await addSubmissions(ev, star, count, () => { const r = rng(); return r < 0.75 ? 'approved' : r < 0.9 ? 'pending' : 'rejected'; });
@@ -129,12 +130,13 @@ await addSubmissions(ev, partial, 30, () => 'approved', 1);
 await addSubmissions(ev, small, 8, () => 'approved', 1);
 await addSubmissions(ev, gated, 12, () => 'pending');
 await addSubmissions(ev, outfit, 150, () => 'approved', 0.85, outfitSvg);
+await addSubmissions(ev, few, 3, () => 'approved', 1); // last, so the others' random data stays the same
 flush();
 
 const total = Object.values(db.submissions).filter((s) => s.eventId === ev.id).length;
 console.log(`Seeded "${ev.name}" with ${total} submissions.\n`);
 console.log(`Organizer: ${base}/admin/${ev.organizerToken}`);
-for (const c of [star, partial, small, gated, outfit]) {
+for (const c of [star, partial, small, gated, outfit, few]) {
   console.log(`\n${c.name} (${c.released ? 'released' : 'not released'})`);
   console.log(`  Fan page: ${base}/e/${ev.id}/c/${c.id}`);
   console.log(`  Reveal:   ${base}/r/${c.revealToken}`);

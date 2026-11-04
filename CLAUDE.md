@@ -16,7 +16,8 @@ Read `PLAN.md` first. It holds the spec, route list, privacy checklist, mosaic a
 - No front-end build step. Plain HTML, CSS, and ES modules under `public/`.
 - No inline `style="…"` attributes: the CSP blocks them (they silently do nothing). Use a class in `public/css/app.css`, where the design tokens live.
 - `public/js/mosaic.js` and `public/js/edit.js` must stay **DOM-free and pure** so they can be tested in Node (and `edit.js` runs on the server too). Canvas code lives elsewhere (`reveal.js`, `editor.js`).
-- Keep the consent wording in `lib/consent.js` only. Bump `CONSENT_VERSION` whenever the wording changes.
+- Keep the consent wording in `lib/consent.js` only, in all three languages. Bump `CONSENT_VERSION` whenever any of the wording changes.
+- No hardcoded user-facing words in pages or scripts: add keys to all three catalogs in `public/locales/` and use `t()` or `data-i18n`. The server sends error codes (`{error: 'code', ...details}`), never sentences. See "Languages" in PLAN.md.
 - All storage goes through `lib/store.js`. Do not write `db.json` from anywhere else.
 
 ## Privacy rules (do not break these)
@@ -37,3 +38,4 @@ Read `PLAN.md` first. It holds the spec, route list, privacy checklist, mosaic a
 - Edit: `normalizeEdit` validation, crops always inside the photo, tone curves monotonic, Auto fixes a dark tinted photo but leaves a good one (and a red costume) alone.
 - Store: `purgeExpired` with a fake clock; removal helpers delete files.
 - API: consent required, delete code works, unapproved items never appear in `/api/reveal/*`, edits never change the stored photo file.
+- Bundle ("Download all"): no ids, tokens, delete codes, or hashes, and no hidden, unapproved, or uncredited-name content in `index.html`, `manifest.json`, or `messages.txt`; the gallery loads nothing from the network. Keep `BUNDLE-FORMAT.md` in step with `lib/bundle.js`.

@@ -38,9 +38,26 @@ test('the static demo publishes only what the reveal API would show, and no secr
     assert.equal(fs.readdirSync(path.join(out, 'media')).length, linked.size);
     // Pages are marked static and work from any folder.
     const reveal = fs.readFileSync(path.join(out, 'r/yuki/index.html'), 'utf8');
-    assert.match(reveal, /<html lang="en" data-static>/);
+    assert.match(reveal, /<html data-static lang="en"/);
     assert.match(reveal, /<base href="\.\.\/\.\.\/">/);
     assert.doesNotMatch(reveal, /(href|src)="\//, 'no root-absolute links');
+    // The language catalogs ship with it, and the hub page switches language like the others.
+    for (const l of ['en', 'zh-Hans', 'zh-Hant']) assert.ok(fs.existsSync(path.join(out, `locales/${l}.json`)), l);
+    const hub = fs.readFileSync(path.join(out, 'index.html'), 'utf8');
+    assert.match(hub, /data-lang-switch/);
+    assert.match(hub, /<script type="module" src="js\/i18n\.js">/);
+    const fanPage = JSON.parse(fs.readFileSync(path.join(out, 'api/fan/demo/aki.json'), 'utf8'));
+    assert.deepEqual(Object.keys(fanPage.consent), ['en', 'zh-Hans', 'zh-Hant']);
+    // Every released cosplayer also in the other two styles, with the same items; never the unreleased one.
+    const yuki = JSON.parse(fs.readFileSync(path.join(out, 'api/reveal/yuki.json'), 'utf8'));
+    for (const style of ['polaroid', 'constellation']) {
+      const v = JSON.parse(fs.readFileSync(path.join(out, `api/reveal/yuki-${style}.json`), 'utf8'));
+      assert.equal(v.event.style, style);
+      assert.deepEqual(v.items, yuki.items);
+      assert.ok(fs.existsSync(path.join(out, `r/yuki-${style}/index.html`)));
+      assert.ok(!fs.existsSync(path.join(out, `api/reveal/kai-${style}.json`)));
+    }
+    assert.match(hub, /href="r\/sora-constellation\/"/);
     assert.match(fs.readFileSync(path.join(out, 'api/admin/demo/qr/aki.svg'), 'utf8'), /<svg/);
   } finally {
     fs.rmSync(out, { recursive: true, force: true });
