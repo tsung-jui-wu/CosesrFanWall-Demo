@@ -91,6 +91,29 @@ export function toast(message, { error = false } = {}) {
   statusTimer = setTimeout(() => box.classList.remove('show'), error ? 6000 : 2500);
 }
 
+export function downloadBlob(blob, name) {
+  const href = URL.createObjectURL(blob);
+  const a = el('a', { href, download: name });
+  document.body.append(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(href), 10000);
+}
+
+// Share sheet on phones (save to photos, post); a plain download on desktop.
+export async function saveOrShare(blob, name, title) {
+  const file = new File([blob], name, { type: blob.type || 'image/jpeg' });
+  if (matchMedia('(pointer: coarse)').matches && navigator.canShare?.({ files: [file] })) {
+    try {
+      await navigator.share({ files: [file], title });
+      return;
+    } catch (err) {
+      if (err.name === 'AbortError') return; // closed the share sheet
+    }
+  }
+  downloadBlob(blob, name);
+}
+
 // The clipboard API needs HTTPS (or localhost); elsewhere fall back to a prompt the person can copy from.
 // what: 'link' or 'code'.
 export async function copyText(text, what = 'link') {
