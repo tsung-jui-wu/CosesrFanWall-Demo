@@ -1,9 +1,9 @@
 <!doctype html>
-<html lang="en" data-static>
+<html data-static lang="en" class="i18n-pending">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>FanWall demo</title>
+  <title data-i18n="demo.hub.title"></title>
   <link rel="icon" href="favicon.svg" type="image/svg+xml">
   <link rel="stylesheet" href="css/app.css">
 </head>
@@ -11,35 +11,38 @@
   <main>
     <header class="topbar">
       <span class="wordmark">FanWall</span>
-      <span class="chip">View-only demo</span>
+      <div class="topbar-end">
+        <span class="chip" data-i18n="demo.banner"></span>
+        <div class="lang-switch" data-lang-switch></div>
+      </div>
     </header>
     <section class="spotlight" aria-labelledby="hero-h">
       <h1 id="hero-h">FanWall</h1>
-      <p class="lead">Fans send a guest cosplayer photos and thank-you notes at an event. The organizer reviews them,
-        then the cosplayer gets one link that plays them back as a mosaic. Everything here is made-up demo data,
-        and nothing can be sent or saved.</p>
+      <p class="lead" data-i18n="demo.hub.lead"></p>
     </section>
     <section class="panel" aria-labelledby="rev-h">
-      <h2 id="rev-h">The cosplayer's page</h2>
-      <p class="muted">What a cosplayer opens after the event. Press Play, then tap a photo or try Manage and Edit.</p>
+      <h2 id="rev-h" data-i18n="demo.hub.revealHeading"></h2>
+      <p class="muted" data-i18n="demo.hub.revealText"></p>
       <ul class="demo-links">
-        <li><a href="r/yuki/">Yuki</a><span>Lots of photos of one costume, assembled over their own photo.</span></li>
-        <li><a href="r/aki/">Aki</a><span>Lots of photos, assembled over the event image.</span></li>
-        <li><a href="r/mei/">Mei</a><span>A few dozen photos: the subject fills in first.</span></li>
-        <li><a href="r/rin/">Rin</a><span>Only a handful, so they float instead of making a mosaic.</span></li>
-        <li><a href="r/kai/">Kai</a><span>What a cosplayer sees before the organizer releases their page.</span></li>
+        <li><a href="r/yuki/">Yuki</a><span data-i18n="demo.case.yuki"></span><span class="demo-styles"><a href="r/yuki/" data-i18n="style.mosaic.name"></a> · <a href="r/yuki-polaroid/" data-i18n="style.polaroid.name"></a> · <a href="r/yuki-constellation/" data-i18n="style.constellation.name"></a></span></li>
+        <li><a href="r/aki/">Aki</a><span data-i18n="demo.case.aki"></span><span class="demo-styles"><a href="r/aki/" data-i18n="style.mosaic.name"></a> · <a href="r/aki-polaroid/" data-i18n="style.polaroid.name"></a> · <a href="r/aki-constellation/" data-i18n="style.constellation.name"></a></span></li>
+        <li><a href="r/mei/">Mei</a><span data-i18n="demo.case.mei"></span><span class="demo-styles"><a href="r/mei/" data-i18n="style.mosaic.name"></a> · <a href="r/mei-polaroid/" data-i18n="style.polaroid.name"></a> · <a href="r/mei-constellation/" data-i18n="style.constellation.name"></a></span></li>
+        <li><a href="r/rin/">Rin</a><span data-i18n="demo.case.rin"></span><span class="demo-styles"><a href="r/rin/" data-i18n="style.mosaic.name"></a> · <a href="r/rin-polaroid/" data-i18n="style.polaroid.name"></a> · <a href="r/rin-constellation/" data-i18n="style.constellation.name"></a></span></li>
+        <li><a href="r/sora/">Sora</a><span data-i18n="demo.case.sora"></span><span class="demo-styles"><a href="r/sora/" data-i18n="style.mosaic.name"></a> · <a href="r/sora-polaroid/" data-i18n="style.polaroid.name"></a> · <a href="r/sora-constellation/" data-i18n="style.constellation.name"></a></span></li>
+        <li><a href="r/kai/">Kai</a><span data-i18n="demo.case.kai"></span></li>
       </ul>
     </section>
     <section class="panel" aria-labelledby="fan-h">
-      <h2 id="fan-h">The fan page</h2>
-      <p class="muted">What a fan sees after scanning the QR sign. Picking and editing a photo works; sending is off.</p>
-      <ul class="demo-links"><li><a href="e/demo/c/aki/">Send Aki a thank-you</a></li></ul>
+      <h2 id="fan-h" data-i18n="demo.hub.fanHeading"></h2>
+      <p class="muted" data-i18n="demo.hub.fanText"></p>
+      <ul class="demo-links"><li><a href="e/demo/c/aki/" data-i18n="fan.titleFor" data-i18n-vars="{&quot;name&quot;:&quot;Aki&quot;}"></a></li></ul>
     </section>
     <section class="panel" aria-labelledby="org-h">
-      <h2 id="org-h">The organizer's dashboard</h2>
-      <p class="muted">Review, approve, and hand out links. Approving and rejecting change this page only.</p>
-      <ul class="demo-links"><li><a href="admin/demo/">Organizer dashboard</a></li></ul>
+      <h2 id="org-h" data-i18n="demo.hub.orgHeading"></h2>
+      <p class="muted" data-i18n="demo.hub.orgText"></p>
+      <ul class="demo-links"><li><a href="admin/demo/" data-i18n="admin.heading"></a></li></ul>
     </section>
   </main>
+  <script type="module" src="js/i18n.js"></script>
 </body>
 </html>

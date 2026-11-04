@@ -1,18 +1,20 @@
 <!doctype html>
-<html lang="en" data-static>
+<html data-static lang="en" class="i18n-pending" data-lang-scope="print">
 <head>
   <meta charset="utf-8">
   <base href="../../../../">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="robots" content="noindex">
-  <title>Print sign · FanWall</title>
+  <title data-i18n="print.docTitle"></title>
   <link rel="icon" href="favicon.svg" type="image/svg+xml">
   <link rel="stylesheet" href="css/app.css">
 </head>
 <body>
-  <p class="demo-banner">View-only demo · <a href="">all demo pages</a></p>
-  <div class="print-bar">
-    <button type="button" class="primary" id="print">Print this sign</button>
+  <p class="demo-banner"><span data-i18n="demo.banner"></span> · <a href="" data-i18n="demo.allPages"></a></p>
+  <div class="print-bar row">
+    <button type="button" class="primary" id="print" data-i18n="print.print"></button>
+    <!-- The sign's own language, remembered apart from the dashboard's: it's for the people who scan it. -->
+    <div class="lang-switch" data-lang-switch data-lang-label="print.lang"></div>
   </div>
   <article class="sign" id="sign" hidden>
     <p class="event" id="event-name"></p>
@@ -20,7 +22,7 @@
     <p class="character" id="cos-character"></p>
     <img class="qr" id="qr" alt="">
     <p class="cta" id="cta"></p>
-    <p class="fine">No account needed. Everything is reviewed by the organizer before it's shared.</p>
+    <p class="fine" data-i18n="print.fine"></p>
   </article>
   <div id="status" role="status" aria-live="polite"></div>
   <script type="module" src="js/print.js"></script>

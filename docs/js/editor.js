@@ -3,6 +3,7 @@
 // The math is in edit.js (pure, shared with the server); this file is the canvas and the controls.
 import { el, loadBitmap } from './api.js';
 import { EMPTY_EDIT, normalizeEdit, rotatedSize, cropRect, colorOps, applyColor, analyze } from './edit.js';
+import { t, lang } from './i18n.js';
 
 const $ = (id) => document.getElementById(id);
 const makeCanvas = (w, h) => Object.assign(document.createElement('canvas'), { width: w, height: h });
@@ -87,7 +88,7 @@ function syncControls() {
   for (const k of SLIDERS) setSlider(`ed-${k}`, Math.round(e[k] * 100), signed(Math.round(e[k] * 100)));
   const pannable = Boolean(e.crop);
   view.classList.toggle('pannable', pannable);
-  $('ed-status').textContent = pannable ? 'Drag the photo (or use the arrow keys) to move the crop.' : '';
+  $('ed-status').textContent = pannable ? t('editor.dragHint') : '';
 }
 function setSlider(id, value, label) {
   const input = $(id);
@@ -113,7 +114,7 @@ const changed = () => { syncControls(); draw(); };
 // Opens the editor. load() resolves to an ImageBitmap of the photo; edit is the starting edit
 // (or null). save(edit) stores or applies the clean edit and resolves to what was kept;
 // onClose(saved, result) runs once the dialog is gone.
-export async function openEditor({ load, edit = null, title = 'Edit photo', saveLabel = 'Save' }, { save, onClose }) {
+export async function openEditor({ load, edit = null, title = t('editor.title'), saveLabel = t('editor.save') }, { save, onClose }) {
   build();
   st = { src: null, edit: structuredClone({ ...EMPTY_EDIT, ...edit }), analysis: null, save, onClose, saved: false, result: null, comparing: false };
   const mine = st;
@@ -122,7 +123,7 @@ export async function openEditor({ load, edit = null, title = 'Edit photo', save
   $('ed-tools').inert = true;
   $('ed-save').disabled = true;
   view.width = view.height = 1;
-  $('ed-status').textContent = 'Loading photo…';
+  $('ed-status').textContent = t('editor.loading');
   dialog.showModal();
   try {
     const bmp = await load();
@@ -130,7 +131,7 @@ export async function openEditor({ load, edit = null, title = 'Edit photo', save
     st.src = shrink(bmp, PREVIEW_PX);
     bmp.close();
   } catch {
-    if (st === mine) $('ed-status').textContent = "Couldn't load this photo. Close and try again.";
+    if (st === mine) $('ed-status').textContent = t('editor.loadFailed');
     return;
   }
   $('ed-tools').inert = false;
@@ -140,38 +141,41 @@ export async function openEditor({ load, edit = null, title = 'Edit photo', save
   view.focus();
 }
 
-// Built on first use so any page can include the editor with one import.
+// Built on first use so any page can include the editor with one import, and built again if the
+// page language has changed since (the dialog is modal, so it can't change while it's open).
 function build() {
-  if (dialog) return;
+  if (dialog?.lang === lang) return;
+  dialog?.remove();
   const slider = (id, label, min, max, rowId = null) => el('label', { class: 'slider', id: rowId, hidden: Boolean(rowId) },
-    el('span', { text: label }), el('input', { type: 'range', id, min, max, step: 1 }), el('output'));
-  const ratios = [['', 'Original shape'], ['1', 'Square'], ['0.8', 'Portrait 4:5'], ['0.5625', 'Story 9:16'], ['1.7778', 'Wide 16:9']];
+    el('span', { text: t(label) }), el('input', { type: 'range', id, min, max, step: 1 }), el('output'));
+  const ratios = [['', 'editor.ratio.original'], ['1', 'editor.ratio.square'], ['0.8', 'editor.ratio.portrait'],
+    ['0.5625', 'editor.ratio.story'], ['1.7778', 'editor.ratio.wide']];
   // No backdrop click to close: a crop drag that ends outside the box would lose the edits.
-  dialog = el('dialog', { id: 'editor', class: 'editor', 'aria-labelledby': 'editor-h' },
+  dialog = el('dialog', { id: 'editor', class: 'editor', lang, 'aria-labelledby': 'editor-h' },
     el('div', { class: 'drawer-head' },
-      el('h2', { id: 'editor-h', text: 'Edit photo' }),
-      el('button', { type: 'button', class: 'close', 'data-close': true, 'aria-label': 'Close without saving', text: '✕' })),
+      el('h2', { id: 'editor-h', text: t('editor.title') }),
+      el('button', { type: 'button', class: 'close', 'data-close': true, 'aria-label': t('editor.closeNoSave'), text: '✕' })),
     el('div', { class: 'ed-stage' },
-      (view = el('canvas', { id: 'ed-canvas', tabindex: '0', role: 'img', 'aria-label': 'Preview of the edited photo' }))),
+      (view = el('canvas', { id: 'ed-canvas', tabindex: '0', role: 'img', 'aria-label': t('editor.preview') }))),
     el('p', { id: 'ed-status', class: 'small ed-status', 'aria-live': 'polite' }),
     el('div', { id: 'ed-tools', class: 'ed-tools' },
       el('div', { class: 'row' },
-        el('button', { type: 'button', id: 'ed-auto', 'aria-pressed': 'false', text: 'Auto' }),
-        el('button', { type: 'button', id: 'ed-rotate', text: 'Rotate' }),
-        el('label', { class: 'visually-hidden', for: 'ed-ratio', text: 'Crop shape' }),
-        el('select', { id: 'ed-ratio' }, ratios.map(([value, text]) => el('option', { value, text }))),
-        el('button', { type: 'button', id: 'ed-compare', text: 'Hold to compare' })),
-      slider('ed-auto-s', 'Auto strength', 0, 100, 'ed-auto-row'),
-      slider('ed-zoom', 'Zoom', 100, 300),
-      slider('ed-exposure', 'Exposure', -100, 100),
-      slider('ed-contrast', 'Contrast', -100, 100),
-      slider('ed-warmth', 'Warmth', -100, 100),
-      slider('ed-saturation', 'Saturation', -100, 100)),
+        el('button', { type: 'button', id: 'ed-auto', 'aria-pressed': 'false', text: t('editor.auto') }),
+        el('button', { type: 'button', id: 'ed-rotate', text: t('editor.rotate') }),
+        el('label', { class: 'visually-hidden', for: 'ed-ratio', text: t('editor.cropShape') }),
+        el('select', { id: 'ed-ratio' }, ratios.map(([value, key]) => el('option', { value, text: t(key) }))),
+        el('button', { type: 'button', id: 'ed-compare', text: t('editor.compare') })),
+      slider('ed-auto-s', 'editor.autoStrength', 0, 100, 'ed-auto-row'),
+      slider('ed-zoom', 'editor.zoom', 100, 300),
+      slider('ed-exposure', 'editor.exposure', -100, 100),
+      slider('ed-contrast', 'editor.contrast', -100, 100),
+      slider('ed-warmth', 'editor.warmth', -100, 100),
+      slider('ed-saturation', 'editor.saturation', -100, 100)),
     el('div', { class: 'row ed-actions' },
-      el('button', { type: 'button', id: 'ed-reset', text: 'Reset' }),
+      el('button', { type: 'button', id: 'ed-reset', text: t('editor.reset') }),
       el('span', { class: 'spacer' }),
-      el('button', { type: 'button', 'data-close': true, text: 'Cancel' }),
-      el('button', { type: 'button', class: 'primary', id: 'ed-save', text: 'Save' })));
+      el('button', { type: 'button', 'data-close': true, text: t('common.cancel') }),
+      el('button', { type: 'button', class: 'primary', id: 'ed-save', text: t('editor.save') })));
   document.body.append(dialog);
   wire();
 }
@@ -258,7 +262,8 @@ function wire() {
       Object.assign(mine, { saved: true, result });
       dialog.close();
     } catch (err) {
-      if (st === mine) $('ed-status').textContent = err.message || "Couldn't save. Try again.";
+      // An API error is already in the page language (err.key); anything else gets the generic line.
+      if (st === mine) $('ed-status').textContent = err.key ? err.message : t('editor.saveFailed');
     } finally {
       button.disabled = false;
     }

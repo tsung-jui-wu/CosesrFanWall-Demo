@@ -1,5 +1,6 @@
-import { api, el, toast, copyText, STATIC, VIEW_ONLY, segmentAfter } from './api.js';
+import { api, el, toast, copyText, STATIC, segmentAfter } from './api.js';
 import { openEditor, renderEdited, canvasBlob } from './editor.js';
+import { t, lang, setText, setTitle, errorKey, formatDateTime, onLangChange, useEventLang } from './i18n.js';
 
 const eid = segmentAfter('e'), cid = segmentAfter('c');
 const $ = (id) => document.getElementById(id);
@@ -11,6 +12,7 @@ const DAY = 86400e3;
 const VIEWS = ['loading', 'error', 'form', 'sending', 'waiting', 'done'];
 
 let info = null;
+let consentLang = null; // the language of the consent text on screen, sent with each submission
 // The picked photo. base is the resized, unedited copy (kept so the fan can re-edit or reset
 // without losing quality); blob is what gets sent, with the fan's edit applied.
 let photo = null; // { base, edit, blob, url, editable }
@@ -27,9 +29,9 @@ function show(view) {
 }
 const current = () => VIEWS.find((v) => !$(`view-${v}`).hidden);
 
-function showError(title, text) {
-  $('error-title').textContent = title;
-  $('error-text').textContent = text;
+function showError(titleKey, textKey, vars) {
+  setText($('error-title'), titleKey, vars);
+  setText($('error-text'), textKey, vars);
   show('error');
 }
 
@@ -59,21 +61,21 @@ function renderMine() {
   $('mine-empty').hidden = mine.length > 0;
   $('mine-list').replaceChildren(...mine.map((e) => el('li', {},
     el('div', {},
-      el('strong', { text: e.kind === 'photo' ? 'Photo' : 'Note' }),
-      el('span', { class: 'muted small', text: ` · ${new Date(e.at).toLocaleString()}` }),
+      el('strong', { text: t(e.kind === 'photo' ? 'fan.mine.photo' : 'fan.mine.note') }),
+      el('span', { class: 'muted small', text: ` · ${formatDateTime(e.at)}` }),
       el('div', { class: 'small mono', text: e.code })),
-    el('button', { type: 'button', class: 'danger', text: 'Delete', onclick: () => deleteSaved(e) }))));
+    el('button', { type: 'button', class: 'danger', text: t('common.delete'), onclick: () => deleteSaved(e) }))));
 }
 
 async function deleteSaved(e) {
-  if (!confirm('Delete this for good? The cosplayer will never see it.')) return;
+  if (!confirm(t('fan.mine.confirmDelete'))) return;
   try {
     await api('/api/fan/delete', { method: 'POST', json: { id: e.id, code: e.code } });
-    toast('Deleted.');
+    toast(t('common.deleted'));
     forget((x) => x.id === e.id);
   } catch (err) {
     if (err.status === 404) {
-      toast('It was already removed.');
+      toast(t('fan.mine.alreadyRemoved'));
       forget((x) => x.id === e.id);
     } else {
       toast(err.message, { error: true });
@@ -87,7 +89,7 @@ $('code-form').addEventListener('submit', async (e) => {
   if (!code) return;
   try {
     await api('/api/fan/delete', { method: 'POST', json: { code } });
-    toast('Deleted.');
+    toast(t('common.deleted'));
     $('code-input').value = '';
     const norm = (c) => c.toUpperCase().replace(/[^0-9A-Z]/g, '');
     forget((x) => norm(x.code) === norm(code));
@@ -145,7 +147,7 @@ function setPhoto(p) {
   photo = p ? { ...p, url: URL.createObjectURL(p.blob) } : null;
   $('preview').hidden = !photo;
   $('photo-edit').hidden = !photo?.editable;
-  $('photo-edit').textContent = photo?.edit ? 'Change edit' : 'Edit photo';
+  setText($('photo-edit'), photo?.edit ? 'fan.photo.changeEdit' : 'fan.photo.edit');
   $('photo-pick').hidden = Boolean(photo);
   $('preview-missing').hidden = true;
   $('preview-img').hidden = false;
@@ -164,7 +166,7 @@ for (const input of [$('photo-camera'), $('photo-library')]) {
     const file = input.files[0];
     input.value = '';
     if (!file) return;
-    if (file.type && !file.type.startsWith('image/')) return formError('Please choose an image file.');
+    if (file.type && !file.type.startsWith('image/')) return formError('error.not_image');
     formError('');
     $('photo-busy').hidden = false;
     try {
@@ -182,7 +184,7 @@ for (const input of [$('photo-camera'), $('photo-library')]) {
 $('photo-edit').addEventListener('click', () => {
   const p = photo;
   let blob = null;
-  openEditor({ load: () => createImageBitmap(p.base), edit: p.edit, title: 'Edit your photo', saveLabel: 'Done' }, {
+  openEditor({ load: () => createImageBitmap(p.base), edit: p.edit, title: t('fan.editor.title'), saveLabel: t('fan.editor.done') }, {
     save: async (edit) => {
       if (edit) {
         const bmp = await createImageBitmap(p.base);
@@ -211,8 +213,9 @@ function updateCounter() {
 }
 $('message').addEventListener('input', updateCounter);
 
-function formError(text) {
-  $('form-error').textContent = text;
+// key is a catalog key (or '' to clear), so the message follows a language switch.
+function formError(key, vars) {
+  setText($('form-error'), key, vars);
 }
 
 function resetForm() {
@@ -233,18 +236,18 @@ function restoreForm(item) {
 
 $('view-form').addEventListener('submit', (e) => {
   e.preventDefault();
-  if (STATIC) return formError(`${VIEW_ONLY} Picking and editing a photo works; sending doesn't.`);
+  if (STATIC) return formError('fan.form.demoOff');
   const message = $('message').value.trim();
-  if (!photo && !message) return formError('Add a photo or a message (or both).');
-  if ([...message].length > MAX_MESSAGE) return formError(`Messages can be up to ${MAX_MESSAGE} characters.`);
+  if (!photo && !message) return formError('fan.form.empty');
+  if ([...message].length > MAX_MESSAGE) return formError('fan.form.tooLong', { max: MAX_MESSAGE });
   if (!$('consent').checked) {
-    formError('Please tick the box to agree before sending.');
+    formError('fan.form.needConsent');
     return $('consent').focus();
   }
   const item = {
     message, name: $('name').value.trim(), credit: $('credit').checked,
     photo: photo && { base: photo.base, edit: photo.edit, blob: photo.blob, editable: photo.editable },
-    blob: photo?.blob ?? null, kind: photo ? 'photo' : 'note', code: newDeleteCode(),
+    blob: photo?.blob ?? null, kind: photo ? 'photo' : 'note', code: newDeleteCode(), consentLang,
   };
   queue.push(item);
   foreground = item;
@@ -259,6 +262,7 @@ function upload(item, onProgress) {
   return new Promise((resolve) => {
     const form = new FormData();
     form.append('consent', '1');
+    form.append('consentLang', item.consentLang);
     form.append('code', item.code);
     if (item.message) form.append('message', item.message);
     if (item.name) form.append('name', item.name);
@@ -272,10 +276,14 @@ function upload(item, onProgress) {
     xhr.onload = () => {
       const body = xhr.response ?? {};
       if (xhr.status === 201) return resolve({ ok: true, body });
+      // error: { key, vars } for the server's error code, ready for t() or setText().
       if (xhr.status === 429 || xhr.status >= 500) {
-        return resolve({ transient: true, retryAfter: Number(xhr.getResponseHeader('Retry-After')) || 0, message: body.error });
+        return resolve({
+          transient: true, retryAfter: Number(xhr.getResponseHeader('Retry-After')) || 0,
+          error: body.error ? errorKey(body, xhr.status) : null,
+        });
       }
-      resolve({ message: body.error || `Something went wrong (${xhr.status}).` });
+      resolve({ error: errorKey(body, xhr.status) });
     };
     xhr.onerror = xhr.ontimeout = () => resolve({ transient: true, retryAfter: 0 });
     xhr.send(form);
@@ -298,12 +306,12 @@ async function processQueue() {
     remember({ id: r.body.id, code: r.body.deleteCode, eid, cid, kind: item.kind, at: Date.now() });
     if (item === foreground) {
       foreground = null;
-      $('done-text').textContent = `${info.cosplayer.name} will see it once the organizer has reviewed it.`;
+      setText($('done-text'), 'fan.done.text', { name: info.cosplayer.name });
       $('done-code').textContent = r.body.deleteCode;
       show('done');
       $('send-another').focus();
     } else {
-      toast('A waiting item was sent.');
+      toast(t('fan.queue.sentLater'));
     }
     return processQueue();
   }
@@ -311,9 +319,8 @@ async function processQueue() {
   if (r.transient) {
     retryDelay = Math.min(60, retryDelay ? retryDelay * 2 : 5);
     retryTimer = setTimeout(processQueue, Math.max(r.retryAfter, retryDelay) * 1000);
-    $('waiting-text').textContent = r.message
-      ? `${r.message} We'll try again automatically; keep this page open.`
-      : "We couldn't reach the server. Keep this page open and we'll send it automatically.";
+    if (r.error) setText($('waiting-text'), 'fan.waiting.retryWith', { message: t(r.error.key, r.error.vars) });
+    else setText($('waiting-text'), 'fan.waiting.text');
     if (item === foreground || current() === 'sending') show('waiting');
     return renderBanner();
   }
@@ -324,20 +331,21 @@ async function processQueue() {
     foreground = null;
     restoreForm(item);
     show('form');
-    formError(r.message);
+    formError(r.error.key, r.error.vars);
     $('form-error').scrollIntoView({ block: 'center' });
   } else {
-    toast(`A waiting item couldn't be sent: ${r.message}`, { error: true });
+    toast(t('fan.queue.failed', { message: t(r.error.key, r.error.vars) }), { error: true });
   }
   processQueue();
 }
 
+// The fan's own uploads still waiting for a connection; nothing about anyone else's.
 function renderBanner() {
   const waiting = queue.length;
   const banner = $('queue-banner');
   const onScreen = ['form', 'done'].includes(current());
   banner.hidden = !(waiting && onScreen);
-  banner.textContent = `${waiting} item${waiting === 1 ? '' : 's'} waiting to send. Keep this page open.`;
+  setText(banner, 'fan.queue.banner', { count: waiting });
 }
 
 window.addEventListener('online', () => { retryDelay = 0; processQueue(); });
@@ -352,29 +360,46 @@ $('copy-code').addEventListener('click', () => copyText($('done-code').textConte
 
 // ---------- start ----------
 function renderInfo() {
-  const { event, cosplayer, consent } = info;
-  document.title = `Send ${cosplayer.name} a thank-you · FanWall`;
+  const { event, cosplayer } = info;
+  const name = cosplayer.name;
+  setTitle('fan.docTitleFor', { name });
   $('event-name').textContent = event.name;
-  $('title').textContent = `Send ${cosplayer.name} a thank-you`;
-  $('lead').textContent = `A photo, a note, or both. It reaches ${cosplayer.name} after the organizer has a look.`;
+  setText($('title'), 'fan.titleFor', { name });
+  setText($('lead'), 'fan.leadFor', { name });
   $('character').textContent = cosplayer.character;
   $('character').hidden = !cosplayer.character;
-  $('credit-text').textContent = `Show my name to ${cosplayer.name}`;
-  $('send').textContent = `Send to ${cosplayer.name}`;
+  setText($('credit-text'), 'fan.creditFor', { name });
+  setText($('send'), 'fan.sendTo', { name });
+  renderConsent();
+}
+
+// The consent text in the page language. The fan agrees to the words on screen, so a language
+// switch clears the box and the submission records the language they ticked it in.
+function renderConsent() {
+  const next = info.consent[lang] ? lang : 'en';
+  if (consentLang && consentLang !== next) $('consent').checked = false;
+  consentLang = next;
+  const consent = info.consent[next];
   $('consent-title').textContent = consent.title;
   $('consent-points').replaceChildren(...consent.points.map((p) =>
     el('div', {}, el('dt', { text: p.h }), el('dd', { text: p.t }))));
   $('consent-text').textContent = consent.checkbox;
 }
 
+onLangChange(() => {
+  renderMine();
+  if (info) renderConsent();
+});
+
 renderMine();
 try {
   info = await api(`/api/fan/${encodeURIComponent(eid)}/${encodeURIComponent(cid)}`);
+  await useEventLang(info.event.lang);
   renderInfo();
   if (info.open) show('form');
-  else showError('Submissions are closed', `Thanks for thinking of ${info.cosplayer.name}! This page isn't taking new photos or notes right now.`);
+  else showError('fan.closed.title', 'fan.closed.text', { name: info.cosplayer.name });
 } catch (err) {
   // fetch rejects with TypeError when offline; anything else is the server saying no.
-  if (err instanceof TypeError) showError("Can't reach FanWall", 'Check your connection, then reload this page.');
-  else showError('This link is not valid', 'Check the QR code, or ask the organizer for a fresh link.');
+  if (err instanceof TypeError) showError('offline.title', 'offline.text');
+  else showError('fan.invalid.title', 'fan.invalid.text');
 }
