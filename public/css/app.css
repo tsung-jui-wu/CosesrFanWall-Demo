@@ -40,13 +40,31 @@
      little deeper so white body text on them passes 4.5:1. */
   --spot-violet: linear-gradient(135deg, #6a4cf5 0%, #b23ad4 100%);
   --spot-sunset: linear-gradient(135deg, #c2410c 0%, #d62f60 100%);
-  --font-display: "Geist", "Inter", system-ui, -apple-system, "Segoe UI", sans-serif;
-  --font-body: "Inter", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  /* Chinese uses the system's own CJK fonts (nothing downloaded). Simplified and Traditional need
+     different glyph shapes, so this follows data-cjk, which i18n.js sets from the page language (on
+     English pages, from the event's language or the browser's Chinese). Inter and Geist cover Latin
+     only, so CJK characters fall through to these before the generic system font. The reveal's
+     canvas reads --font-body, so notes drawn there match the page. */
+  --font-cjk: "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", "Noto Sans CJK SC", "Noto Sans SC", "Source Han Sans SC";
+  --font-display: "Geist", "Inter", var(--font-cjk), system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-body: "Inter", var(--font-cjk), system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
   color-scheme: dark;
+}
+:root[data-cjk="zh-Hant"] {
+  --font-cjk: "PingFang TC", "Microsoft JhengHei", "Noto Sans CJK TC", "Noto Sans TC", "Source Han Sans TC";
 }
 
 * { box-sizing: border-box; }
 [hidden] { display: none !important; } /* class rules like display:flex would otherwise beat the attribute */
+/* Until i18n.js has put the words in (one small fetch), so nobody sees empty buttons or the wrong language. */
+html.i18n-pending body { visibility: hidden; }
+/* Tight negative tracking and sub-1 line heights suit Latin display type but crowd Chinese characters. */
+html:lang(zh) :is(body, h1, h2, h3, button, .button, .lead, .caption-title, .done-hero h2, .sign h1, .stat .num small, .card.note-only .message, .demo-links a) {
+  letter-spacing: 0;
+}
+html:lang(zh) :is(h1, .caption-title, .done-hero h2) { line-height: 1.15; }
+/* A little space between Chinese and Latin text (a Latin name in a Chinese sentence), where supported. */
+html:lang(zh) { text-autospace: normal; }
 html { -webkit-text-size-adjust: 100%; }
 body {
   margin: 0;
@@ -81,6 +99,23 @@ a:hover { color: #4db8ff; }
   padding: 8px 14px; border-radius: 100px; max-width: 60%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 .chip:empty { display: none; }
+.topbar-end { display: flex; align-items: center; justify-content: flex-end; gap: 8px; min-width: 0; }
+/* Language switcher (built by i18n.js): a white outline globe on no background, opening a small menu. */
+.lang-switch { position: relative; display: inline-flex; flex: none; }
+.lang-button { width: 40px; min-height: 40px; padding: 0; border-radius: 9999px; background: transparent; color: var(--ink); }
+.lang-button:hover, .lang-button[aria-expanded="true"] { background: rgba(255, 255, 255, 0.12); }
+.lang-button svg { display: block; }
+.lang-menu {
+  position: absolute; top: calc(100% + 6px); right: 0; z-index: 20; min-width: 168px;
+  margin: 0; padding: 6px; list-style: none; border-radius: 15px; background: var(--surface-2);
+  box-shadow: 0 0 0 0.5px rgba(255, 255, 255, 0.1), 0 10px 30px rgba(0, 0, 0, 0.45);
+}
+.lang-menu button {
+  width: 100%; justify-content: space-between; min-height: 40px; padding: 0 12px;
+  border-radius: 10px; background: transparent; font-size: 15px; font-weight: 500;
+}
+.lang-menu button:hover, .lang-menu button:focus-visible { background: var(--hairline); }
+.lang-menu button[aria-checked="true"]::after { content: "✓"; color: var(--blue); font-weight: 600; }
 
 .spotlight { border-radius: 30px; padding: 30px 24px; background: var(--spot-violet); color: #ffffff; }
 .spotlight.sunset { background: var(--spot-sunset); }
@@ -205,6 +240,7 @@ dialog::backdrop { background: rgba(0, 0, 0, 0.7); }
 .demo-links a { font-family: var(--font-display); font-size: 20px; letter-spacing: -0.03em; color: var(--ink); text-decoration: none; }
 .demo-links a:hover { color: var(--blue); }
 .demo-links span { font-size: 14px; color: var(--muted); }
+.demo-links .demo-styles a { font: 500 14px/1.4 var(--font-body); letter-spacing: 0; color: var(--blue); }
 
 /* ---------- dashboard ---------- */
 .dash-head { display: flex; flex-wrap: wrap; gap: 20px; align-items: flex-end; justify-content: space-between; padding: 18px 0 26px; }
@@ -219,27 +255,69 @@ dialog::backdrop { background: rgba(0, 0, 0, 0.7); }
 .stat .label { font-size: 13px; font-weight: 500; color: var(--muted); }
 .stat.spotlight .label, .stat.spotlight .sub { color: #ffffff; }
 .stat .num { font-family: var(--font-display); font-weight: 500; font-size: 64px; line-height: 0.9; letter-spacing: -0.05em; }
-.stat .num small { font-size: 26px; letter-spacing: -0.03em; color: var(--muted); }
+.stat .num small { font-size: 26px; letter-spacing: -0.03em; color: var(--muted); margin-left: 0.2em; }
 .stat .sub { margin-top: auto; font-size: 13px; font-weight: 500; color: var(--muted); }
 
-.dash { display: flex; flex-wrap: wrap; gap: 20px; align-items: flex-start; }
-.dash-main { flex: 999 1 560px; min-width: 0; }
-.dash-side { flex: 1 1 340px; min-width: 0; display: flex; flex-direction: column; gap: 12px; }
-.dash-side .panel { margin-top: 0; }
-.dash-main > .spread h2 { font-size: 32px; margin: 0; }
+/* Tabs: an underlined row of links; the chosen one is white with a white bar under it. */
+.tabs { display: flex; gap: 4px; border-bottom: 1px solid var(--hairline); margin: 0 0 20px; overflow-x: auto; }
+.tabs [role="tab"] {
+  display: inline-flex; align-items: center; gap: 8px; padding: 12px 16px; margin-bottom: -1px;
+  color: var(--muted); text-decoration: none; font-weight: 500; font-size: 15px; white-space: nowrap;
+  border-bottom: 2px solid transparent;
+}
+.tabs [role="tab"]:hover { color: var(--ink); }
+.tabs [role="tab"][aria-selected="true"] { color: var(--ink); border-bottom-color: var(--ink); }
+.tab-n:not(:empty) { font-size: 12px; font-weight: 600; padding: 2px 8px; border-radius: 100px; background: #3a2a0c; color: var(--warn); }
+
+/* Cosplayers as folders: their picture on top, a little tab on the folder's top edge. */
+.folders { display: grid; gap: 22px 16px; grid-template-columns: repeat(auto-fill, minmax(min(240px, 100%), 1fr)); padding-top: 12px; }
+.folder {
+  position: relative; display: flex; flex-direction: column; background: var(--surface-1); border-radius: 4px 20px 20px 20px;
+  color: var(--ink); text-decoration: none; transition: transform 0.12s, background-color 0.15s;
+}
+.folder::before {
+  content: ""; position: absolute; left: 0; top: -12px; width: 42%; height: 14px;
+  background: inherit; border-radius: 12px 12px 0 0;
+}
+a.folder:hover { background: var(--surface-2); color: var(--ink); transform: translateY(-2px); }
+.folder-image { aspect-ratio: 4 / 3; overflow: hidden; border-radius: 4px 20px 0 0; background: var(--surface-2); display: flex; align-items: center; justify-content: center; }
+.folder-image img, .cos-banner-image img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.folder-image.event-image img { opacity: 0.55; } /* the event's picture, not their own */
+.no-image { background: var(--spot-violet); }
+.no-image .initial { font: 500 64px/1 var(--font-display); color: #ffffff; }
+.folder-body { padding: 14px 16px 16px; display: flex; flex-direction: column; gap: 6px; flex: 1; }
+.folder-body h3 { font-size: 17px; overflow-wrap: anywhere; }
+.folder-counts { display: flex; flex-wrap: wrap; gap: 6px; margin-top: auto; padding-top: 6px; }
+.chip-count { font-size: 12px; font-weight: 500; padding: 4px 10px; border-radius: 100px; background: var(--surface-2); color: var(--muted); }
+.chip-count.warn { background: #3a2a0c; color: var(--warn); }
+.chip-count.style { color: var(--ink); }
+.folder-add { padding: 18px 16px; border: 1px dashed var(--hairline); background: transparent; gap: 4px; }
+.folder-add::before { background: var(--canvas); border: 1px dashed var(--hairline); border-bottom: none; top: -13px; }
+.folder-add h3 { font-size: 17px; margin-bottom: 8px; }
+.folder-add .field { margin-bottom: 10px; }
+.folder-add input[type="text"] { max-width: none; }
+
+/* One cosplayer's page */
+.back { display: inline-flex; align-items: center; gap: 6px; margin: 4px 0 16px; color: var(--muted); text-decoration: none; font-weight: 500; }
+.back::before { content: "←"; }
+.back:hover { color: var(--ink); }
+.cos-hero { background: var(--surface-1); border-radius: 30px; overflow: hidden; margin-bottom: 24px; }
+.cos-banner { position: relative; height: clamp(180px, 34vw, 380px); background: var(--surface-2); }
+.cos-banner-image { width: 100%; height: 100%; display: flex; align-items: center; justify-content: center; }
+.cos-banner-image.no-image .initial { font-size: 120px; }
+.banner-label { position: absolute; left: 16px; bottom: 14px; font-size: 12px; font-weight: 500; padding: 5px 12px; border-radius: 100px; background: rgba(0, 0, 0, 0.6); color: #ffffff; }
+.cos-hero-body { display: flex; flex-wrap: wrap; gap: 12px; align-items: flex-start; justify-content: space-between; padding: 20px 24px 4px; }
+.cos-hero-body h1 { font-size: clamp(36px, 6vw, 62px); overflow-wrap: anywhere; }
+.cos-hero-body p { margin: 8px 0 0; }
+.cos-image-row { padding: 12px 24px 22px; }
+.share-cards, .settings-cards { display: grid; gap: 16px; grid-template-columns: repeat(auto-fit, minmax(min(320px, 100%), 1fr)); align-items: start; }
+.share-cards .panel, .settings-cards .panel { margin-top: 0; }
+.qr-preview { display: block; width: 180px; height: 180px; margin: 4px 0 16px; padding: 10px; background: #ffffff; border-radius: 15px; }
+.danger-card { border: 1px solid #3b1a1f; }
 
 .base-preview { display: block; width: 100%; max-height: 260px; object-fit: cover; border-radius: 15px; margin-bottom: 12px; }
-.cosplayers { display: grid; gap: 10px; margin-top: 14px; }
-.cosplayer { background: var(--canvas); border-radius: 15px; padding: 14px; display: flex; flex-direction: column; gap: 10px; }
-.cosplayer h3 { font-size: 16px; }
-.counts { font-size: 13px; font-weight: 500; color: var(--muted); }
-.cos-base { display: flex; gap: 10px; align-items: center; }
-.cos-base img { width: 56px; height: 56px; object-fit: cover; border-radius: 10px; flex: none; }
-#cos-form { align-items: flex-end; }
-#cos-form .field { margin: 0; flex: 1 1 140px; }
-
-.filters { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; justify-content: space-between; margin: 14px 0 15px; }
-.filters select { width: auto; min-height: 36px; padding: 6px 12px; border-radius: 100px; font-size: 14px; }
+#review > .spread { margin: 0 0 16px; }
+#review select { width: auto; min-height: 40px; padding: 6px 12px; border-radius: 100px; font-size: 14px; }
 .pills { display: flex; flex-wrap: wrap; gap: 4px; }
 .pills button { min-height: 36px; padding: 0 14px; background: transparent; color: var(--muted); }
 .pills button:hover { background: var(--surface-1); }
@@ -312,6 +390,15 @@ body.reveal { overflow: hidden; height: 100vh; height: 100dvh; }
 .reveal .overlay-card h1 { font-size: clamp(40px, 11vw, 62px); margin: 0 0 14px; }
 .reveal .overlay-card .eyebrow { margin-bottom: 14px; }
 .reveal .overlay-card button.primary { margin-top: 10px; }
+.intro-top { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; }
+.intro-top .eyebrow { min-width: 0; overflow-wrap: anywhere; }
+.intro-top .lang-switch { margin: -8px -10px 0 0; }
+/* "Saved until": a quiet line, and in the final week a more visible one with a download next to it. */
+.saved-line { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; font-size: 13px; font-weight: 500; }
+.saved-line .button { min-height: 36px; padding: 0 14px; }
+.saved-line.soon { font-size: 15px; font-weight: 600; padding: 10px 14px; border-radius: 15px; background: #261b07; color: #ffd38a; }
+.spotlight .saved-line { opacity: 0.9; }
+.spotlight .saved-line.soon { opacity: 1; background: rgba(0, 0, 0, 0.3); color: #ffffff; }
 .caption { position: fixed; top: 0; left: 0; right: 0; padding: 18px 20px 0; pointer-events: none; opacity: 0; transition: opacity 0.8s; }
 .caption.show { opacity: 1; }
 .caption p { margin: 0; }
@@ -334,6 +421,13 @@ button.link:hover { background: none; color: var(--ink); }
   text-align: center; font-size: 13px; font-weight: 500; color: var(--muted); pointer-events: none;
 }
 
+/* The organizer's preview: a label on top, and none of the cosplayer's controls. */
+.preview-chip {
+  position: fixed; top: calc(12px + env(safe-area-inset-top)); right: 12px; z-index: 5; margin: 0;
+  padding: 7px 14px; border-radius: 100px; background: var(--warn); color: #000000; font-size: 13px; font-weight: 600;
+}
+.previewing :is(#manage-open, #intro-manage, #lb-edit, .saved-dl) { display: none !important; }
+
 /* Manage drawer and lightbox (native <dialog>: focus trap and Esc for free). */
 .drawer { width: min(560px, 100vw - 24px); max-height: min(86vh, 900px); margin: auto; overflow: auto; }
 .drawer-head { display: flex; justify-content: space-between; align-items: center; gap: 12px; margin-bottom: 8px; }
@@ -348,6 +442,10 @@ dialog p { color: var(--muted); }
 .items .text .who { color: var(--muted); font-size: 13px; }
 .items .acts { display: flex; flex-direction: column; gap: 6px; flex: none; }
 .items .acts button { min-height: 32px; padding: 0 12px; font-size: 13px; }
+.items .acts button.star { font-size: 18px; line-height: 1; color: var(--muted); }
+.items .acts button.star[aria-pressed="true"] { color: var(--warn); box-shadow: none; }
+.fav-row { background: var(--canvas); border-radius: 15px; padding: 12px 14px 2px; margin: 0 0 12px; }
+.fav-row p { margin: 6px 0 10px 30px; }
 .danger-zone { margin-top: 20px; padding-top: 16px; border-top: 1px solid var(--hairline); }
 .danger-zone h3 { margin: 0 0 4px; }
 .lightbox { width: min(720px, 100vw - 24px); max-height: 92vh; overflow: auto; margin: auto; text-align: center; }
@@ -400,7 +498,7 @@ dialog p { color: var(--muted); }
 .sign .qr { width: 100%; max-width: 420px; aspect-ratio: 1; margin: 24px auto; display: block; }
 .sign .cta { font-size: 1.4rem; font-weight: 600; margin: 0 0 8px; }
 .sign .fine { font-size: 0.95rem; color: #555; margin: 0; }
-.print-bar { text-align: center; margin: 16px; }
+.print-bar { justify-content: center; margin: 16px; }
 @media print {
   @page { margin: 12mm; }
   body { background: #fff; color: #111; }

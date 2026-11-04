@@ -1,113 +1,163 @@
 <!doctype html>
-<html lang="en">
+<html lang="en" class="i18n-pending">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="robots" content="noindex">
-  <title>Organizer dashboard · FanWall</title>
+  <title data-i18n="admin.docTitle"></title>
   <link rel="icon" href="/favicon.svg" type="image/svg+xml">
   <link rel="stylesheet" href="/css/app.css">
 </head>
 <body>
   <main>
     <header class="topbar">
-      <span class="wordmark">FanWall<span class="muted">Organizer</span></span>
-      <button type="button" id="refresh">Refresh</button>
+      <span class="wordmark">FanWall<span class="muted" data-i18n="admin.wordmark"></span></span>
+      <div class="topbar-end">
+        <div class="lang-switch" data-lang-switch></div>
+        <button type="button" id="refresh" data-i18n="admin.refresh"></button>
+      </div>
     </header>
 
-    <div class="notice" id="new-notice" hidden>
-      <strong>Bookmark this page.</strong> This link is the only key to your event; anyone who has it can manage it.
-    </div>
-
-    <div class="dash-head">
-      <div>
-        <p class="state" id="event-state"></p>
-        <h1 id="event-title">Organizer dashboard</h1>
-      </div>
-      <button type="button" class="primary" id="release-all" hidden>Release all</button>
-    </div>
-
-    <!-- Counts live here and only here: fan and cosplayer pages never show numbers. -->
-    <section class="stats" aria-label="Overview">
-      <div class="stat spotlight"><span class="label">Waiting for review</span><span class="num" id="stat-pending">0</span><span class="sub">across all cosplayers</span></div>
-      <div class="stat"><span class="label">Approved</span><span class="num" id="stat-approved">0</span><span class="sub">photos and notes</span></div>
-      <div class="stat"><span class="label">Cosplayers</span><span class="num" id="stat-cosplayers">0</span><span class="sub" id="stat-released"></span></div>
-      <div class="stat"><span class="label">Kept for</span><span class="num"><span id="stat-days">30</span><small> days</small></span><span class="sub">after the event closes</span></div>
+    <section id="admin-error" class="panel" hidden>
+      <h2 data-i18n="admin.invalid.title"></h2>
+      <p class="muted" data-i18n="admin.invalid.text"></p>
     </section>
 
-    <div class="dash">
-      <section class="dash-main" aria-labelledby="mod-h">
-        <div class="spread">
-          <h2 id="mod-h">Review</h2>
-          <button type="button" id="bulk-approve">Approve all shown</button>
+    <div id="dash-body">
+    <div class="notice" id="new-notice" hidden>
+      <strong data-i18n="admin.bookmark.title"></strong> <span data-i18n="admin.bookmark.text"></span>
+    </div>
+
+    <!-- Home: the event, its numbers, and three tabs. Counts live on these pages only: fan and
+         cosplayer pages never show numbers. -->
+    <div id="view-home">
+      <div class="dash-head">
+        <div>
+          <p class="state" id="event-state"></p>
+          <h1 id="event-title" data-i18n="admin.heading"></h1>
         </div>
-        <div class="filters">
-          <div id="f-cos" class="pills" role="group" aria-label="Filter by cosplayer"></div>
-          <div>
-            <label for="f-status" class="visually-hidden">Status</label>
-            <select id="f-status">
-              <option value="pending">Waiting for review</option>
-              <option value="approved">Approved</option>
-              <option value="rejected">Rejected</option>
-              <option value="all">All</option>
-            </select>
-          </div>
-        </div>
-        <div id="grid" class="grid" aria-label="Submissions"></div>
-        <p class="small muted keys">Keys: <kbd>A</kbd> approve, <kbd>R</kbd> reject, arrow keys to move.</p>
+        <button type="button" class="primary" id="release-all" hidden data-i18n="admin.releaseAll.label"></button>
+      </div>
+
+      <section class="stats" aria-label="" data-i18n-aria-label="admin.stats.label">
+        <div class="stat spotlight"><span class="label" data-i18n="admin.stats.pending"></span><span class="num" id="stat-pending">0</span><span class="sub" data-i18n="admin.stats.pendingSub"></span></div>
+        <div class="stat"><span class="label" data-i18n="admin.stats.approved"></span><span class="num" id="stat-approved">0</span><span class="sub" data-i18n="admin.stats.approvedSub"></span></div>
+        <div class="stat"><span class="label" data-i18n="admin.stats.cosplayers"></span><span class="num" id="stat-cosplayers">0</span><span class="sub" id="stat-released"></span></div>
+        <div class="stat"><span class="label" data-i18n="admin.stats.keptFor"></span><span class="num"><span id="stat-days">30</span><small id="stat-days-unit"></small></span><span class="sub" data-i18n="admin.stats.keptForSub"></span></div>
       </section>
 
-      <aside class="dash-side">
-        <section class="panel" aria-labelledby="cos-h">
-          <h2 id="cos-h">Cosplayers</h2>
-          <form id="cos-form" class="row">
-            <div class="field">
-              <label for="cos-name">Name</label>
-              <input id="cos-name" type="text" maxlength="60" required autocomplete="off">
-            </div>
-            <div class="field">
-              <label for="cos-character">Character <span class="muted">· optional</span></label>
-              <input id="cos-character" type="text" maxlength="60" autocomplete="off">
-            </div>
-            <button type="submit">Add</button>
-          </form>
-          <div id="cosplayers" class="cosplayers"></div>
-        </section>
+      <div class="tabs" role="tablist" aria-label="" data-i18n-aria-label="admin.tabs.label" id="home-tabs">
+        <a role="tab" id="tab-cosplayers" data-tab="cosplayers" aria-controls="panel-cosplayers"><span data-i18n="admin.cos.heading"></span></a>
+        <a role="tab" id="tab-review" data-tab="review" aria-controls="panel-review"><span data-i18n="admin.review.heading"></span><span class="tab-n" id="tab-review-n"></span></a>
+        <a role="tab" id="tab-settings" data-tab="settings" aria-controls="panel-settings"><span data-i18n="admin.tab.settings"></span></a>
+      </div>
 
-        <section class="panel" aria-labelledby="base-h">
-          <h2 id="base-h">Mosaic image</h2>
-          <img id="base-preview" class="base-preview" alt="Current mosaic image" hidden>
-          <p class="muted">The picture the fan photos assemble into: an event photo, booth shot, or art you have the rights to.
-            Each cosplayer can also get their own image, so no two reveals show the same picture. A photo of them
-            in costume works best: fan photos share its colors, so the mosaic matches far more closely.
-            Only use a photo of someone with their OK; it's deleted on the same schedule as their submissions.</p>
-          <form id="base-form" class="row">
-            <label for="base-file" class="visually-hidden">Choose mosaic image</label>
-            <input id="base-file" type="file" accept="image/*" required>
-            <button type="submit">Upload image</button>
-          </form>
-        </section>
+      <section role="tabpanel" id="panel-cosplayers" aria-labelledby="tab-cosplayers">
+        <div id="folders" class="folders"></div>
+      </section>
 
-        <section class="panel" aria-labelledby="settings-h">
-          <h2 id="settings-h">Event settings</h2>
-          <form id="settings">
-            <div class="field">
-              <label for="ev-name">Event name</label>
-              <input id="ev-name" type="text" maxlength="80" required autocomplete="off">
-            </div>
-            <div class="field">
-              <label for="ev-retention">Keep submissions for (days after the event closes)</label>
-              <input id="ev-retention" type="number" min="1" max="90" required>
-              <p class="small muted">Nothing is kept longer than 90 days after upload, whatever you choose.</p>
-            </div>
-            <div class="field">
-              <label class="check"><input id="ev-open" type="checkbox"> Accepting submissions</label>
-              <p class="small muted">Closing the event starts the retention countdown.</p>
-            </div>
-            <button class="primary" type="submit">Save settings</button>
-          </form>
-        </section>
-      </aside>
+      <section role="tabpanel" id="panel-review" aria-labelledby="tab-review" hidden></section>
+
+      <section role="tabpanel" id="panel-settings" aria-labelledby="tab-settings" hidden>
+        <div class="settings-cards">
+          <section class="panel" aria-labelledby="settings-h">
+            <h2 id="settings-h" data-i18n="admin.settings.heading"></h2>
+            <form id="settings">
+              <div class="field">
+                <label for="ev-name" data-i18n="admin.settings.name"></label>
+                <input id="ev-name" type="text" maxlength="80" required autocomplete="off">
+              </div>
+              <div class="field">
+                <label for="ev-retention" data-i18n="admin.settings.retention"></label>
+                <input id="ev-retention" type="number" min="1" max="90" required>
+                <p class="small muted" data-i18n="admin.settings.retentionNote"></p>
+              </div>
+              <div class="field">
+                <label for="ev-lang" data-i18n="admin.settings.lang"></label>
+                <select id="ev-lang">
+                  <option value="" data-i18n="admin.settings.langNone"></option>
+                  <option value="en" lang="en">English</option>
+                  <option value="zh-Hans" lang="zh-Hans">简体中文</option>
+                  <option value="zh-Hant" lang="zh-Hant">繁體中文</option>
+                </select>
+                <p class="small muted" data-i18n="admin.settings.langNote"></p>
+              </div>
+              <div class="field">
+                <label for="ev-style" data-i18n="admin.settings.style"></label>
+                <select id="ev-style">
+                  <option value="mosaic" data-i18n="style.mosaic.name"></option>
+                  <option value="polaroid" data-i18n="style.polaroid.name"></option>
+                  <option value="constellation" data-i18n="style.constellation.name"></option>
+                </select>
+                <p class="small" id="ev-style-about"></p>
+                <p class="small muted" data-i18n="admin.settings.styleNote"></p>
+              </div>
+              <div class="field">
+                <label class="check"><input id="ev-open" type="checkbox"> <span data-i18n="admin.settings.open"></span></label>
+                <p class="small muted" data-i18n="admin.settings.openNote"></p>
+              </div>
+              <button class="primary" type="submit" data-i18n="admin.settings.save"></button>
+            </form>
+          </section>
+
+          <section class="panel" aria-labelledby="base-h">
+            <h2 id="base-h" data-i18n="admin.base.heading"></h2>
+            <img id="base-preview" class="base-preview" alt="" data-i18n-alt="admin.base.previewAlt" hidden>
+            <p class="muted" data-i18n="admin.base.text"></p>
+            <form id="base-form" class="row">
+              <label for="base-file" class="visually-hidden" data-i18n="admin.base.choose"></label>
+              <input id="base-file" type="file" accept="image/*" required>
+              <button type="submit" data-i18n="admin.base.upload"></button>
+            </form>
+          </section>
+        </div>
+      </section>
+    </div>
+
+    <!-- One cosplayer's page: their image on top, then their review queue and their links. -->
+    <div id="view-cosplayer" hidden>
+      <a class="back" id="back" data-i18n="admin.back"></a>
+      <header class="cos-hero">
+        <div class="cos-banner" id="cos-banner"></div>
+        <div class="cos-hero-body">
+          <div>
+            <h1 id="cos-title"></h1>
+            <p class="muted" id="cos-subtitle"></p>
+          </div>
+          <span class="badge" id="cos-badge"></span>
+        </div>
+        <div class="row cos-image-row" id="cos-image-row"></div>
+      </header>
+
+      <div class="tabs" role="tablist" aria-label="" data-i18n-aria-label="admin.cosTabs.label" id="cos-tabs">
+        <a role="tab" id="tab-c-review" data-tab="review" aria-controls="panel-c-review"><span data-i18n="admin.review.heading"></span><span class="tab-n" id="tab-c-review-n"></span></a>
+        <a role="tab" id="tab-c-share" data-tab="share" aria-controls="panel-c-share"><span data-i18n="admin.cosTab.share"></span></a>
+      </div>
+      <section role="tabpanel" id="panel-c-review" aria-labelledby="tab-c-review"></section>
+      <section role="tabpanel" id="panel-c-share" aria-labelledby="tab-c-share" hidden>
+        <div class="share-cards" id="share-cards"></div>
+      </section>
+    </div>
+
+    <!-- The review queue: shown in the home Review tab (every cosplayer) or on a cosplayer's page (theirs). -->
+    <section id="review" aria-labelledby="mod-h">
+      <div class="spread">
+        <h2 id="mod-h" class="visually-hidden" data-i18n="admin.review.heading"></h2>
+        <div id="f-cos" class="pills" role="group" aria-label="" data-i18n-aria-label="admin.filter.byCosplayer"></div>
+        <div class="row">
+          <label for="f-status" class="visually-hidden" data-i18n="admin.filter.status"></label>
+          <select id="f-status">
+            <option value="pending" data-i18n="admin.filter.pending"></option>
+            <option value="approved" data-i18n="admin.filter.approved"></option>
+            <option value="rejected" data-i18n="admin.filter.rejected"></option>
+            <option value="all" data-i18n="admin.filter.all"></option>
+          </select>
+          <button type="button" id="bulk-approve" data-i18n="admin.bulk.label"></button>
+        </div>
+      </div>
+      <div id="grid" class="grid" aria-label="" data-i18n-aria-label="admin.grid.label"></div>
+      <p class="small muted keys" id="keys-hint"></p>
+    </section>
     </div>
   </main>
   <div id="status" role="status" aria-live="polite"></div>
