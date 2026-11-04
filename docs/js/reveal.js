@@ -2,12 +2,14 @@
 // organizer's image, get pinned up on a wall as prints, or light up as a constellation; notes settle
 // around them. Everything is drawn on one canvas. The timeline is a pure function of elapsed time, so
 // skip, replay, and resize need no extra state.
-import { api, el, toast, loadBitmap, STATIC, segmentAfter } from './api.js';
+import { api, el, toast, loadBitmap, STATIC, segmentAfter, downloadBlob, saveOrShare } from './api.js';
+import { makeIcs, nextDecember } from './ics.js';
 import { tileFeature, targetCells, chooseGrid, planMosaic, mulberry32, hashSeed } from './mosaic.js';
 import { planWall, PRINT_RATIO } from './polaroid.js';
 import { planSky } from './constellation.js';
-import { styleOf, pickPool, cycleItem, EXPORT } from './styles.js';
-import { drawPiece, paintWall, printPiece, paintSky, paintDust, paintLink, starPiece } from './art.js';
+import { styleOf, pickPool, cycleItem } from './styles.js';
+import { makeCanvas, shrinkInto, coverCrop, drawPiece, paintWall, printPiece, paintSky, paintDust, paintLink, starPiece } from './art.js';
+import { renderPicture } from './render.js';
 import { renderEdited, photoBlob, openEditor } from './editor.js';
 import { t, lang, setText, setTitle, formatDate, onLangChange, useEventLang } from './i18n.js';
 
@@ -39,7 +41,6 @@ const PIECE_CYCLE_MS = 2600; // a print or a star moves on to the next photo
 
 const clamp = (v, lo, hi) => Math.min(hi, Math.max(lo, v));
 const easeOut = (p) => 1 - (1 - p) ** 3;
-const makeCanvas = (w, h) => Object.assign(document.createElement('canvas'), { width: w, height: h });
 
 let data = null;
 let scene = null; // built once by prepare()
@@ -51,34 +52,6 @@ let finalCache = null;
 const cardCache = new Map();
 
 // ---------- image prep ----------
-// Step-down halving through two reusable scratch canvases, so big reductions average pixels
-// instead of aliasing (and we don't allocate a canvas per step per tile).
-const scratch = [makeCanvas(1, 1), makeCanvas(1, 1)];
-function shrinkInto(dest, src, sx, sy, sw, sh, tw, th) {
-  let cur = src, cx = sx, cy = sy, cw = sw, ch = sh, flip = 0;
-  while (cw / 2 >= tw && ch / 2 >= th) {
-    const w = Math.round(cw / 2), h = Math.round(ch / 2);
-    const s = scratch[(flip ^= 1)];
-    if (s.width < w) s.width = w;
-    if (s.height < h) s.height = h;
-    const sctx = s.getContext('2d');
-    sctx.clearRect(0, 0, w, h);
-    sctx.drawImage(cur, cx, cy, cw, ch, 0, 0, w, h);
-    cur = s; cx = 0; cy = 0; cw = w; ch = h;
-  }
-  const dctx = dest.getContext('2d');
-  dctx.imageSmoothingQuality = 'high';
-  dctx.clearRect(0, 0, tw, th);
-  dctx.drawImage(cur, cx, cy, cw, ch, 0, 0, tw, th);
-}
-
-// Centered crop of a (w x h) image to the given aspect (width / height).
-function coverCrop(w, h, aspect) {
-  if (w / h > aspect) { const cw = h * aspect; return [(w - cw) / 2, 0, cw, h]; }
-  const ch = w / aspect;
-  return [0, (h - ch) / 2, w, ch];
-}
-
 async function pool(items, limit, fn) {
   const out = new Array(items.length);
   let i = 0;
@@ -973,28 +946,10 @@ let exportBlob = null, exportPromise = null, exportScene = null; // tied to one 
 const canSave = () => Boolean(scene) && scene.mode !== 'float';
 const toJpeg = (c) => new Promise((resolve, reject) => c.toBlob((b) => (b ? resolve(b) : reject(new Error('toBlob failed'))), 'image/jpeg', 0.92));
 
-// The wall or the sky at 4:5, planned for the saved size (styles.js EXPORT), drawn as on screen.
+// The wall or the sky, from the style's still renderer (render.js), at the saved size.
 function renderArtExport() {
-  const s = scene, { width: w, height: h } = EXPORT;
-  const c = makeCanvas(w, h);
-  const g = c.getContext('2d');
-  g.imageSmoothingQuality = 'high';
-  const made = new Map(); // photo -> piece, drawn once each
-  const once = (key, make) => made.get(key) ?? made.set(key, make()).get(key);
-  if (s.mode === 'wall') {
-    paintWall(g, w, h);
-    const plan = planWall({ aspect: w / h, photos: s.pics.length, seed, ...EXPORT.polaroid });
-    const base = w / EXPORT.polaroid.cols * 0.94;
-    for (const p of plan.prints) drawPiece(g, once(p.photo, () => printPiece(s.pics[p.photo].img, base)), p.x * w, p.y * w, p.rot, (p.w * w) / base);
-  } else {
-    paintSky(g, w, h);
-    const plan = planSky({ aspect: w / h, photos: s.pics.length, seed, dust: 260, ...EXPORT.constellation });
-    paintDust(g, plan.dust, plan.height, w, h, 0, true);
-    for (const [a, b] of plan.links) paintLink(g, plan.stars[a].x * w, plan.stars[a].y * w, plan.stars[b].x * w, plan.stars[b].y * w, 1, w / 600);
-    const base = EXPORT.constellation.radius * 1.18 * w;
-    for (const st of plan.stars) drawPiece(g, once(st.photo, () => starPiece(s.pics[st.photo].img, base)), st.x * w, st.y * w, 0, (st.r * w) / base);
-  }
-  return toJpeg(c);
+  const style = scene.mode === 'sky' ? 'constellation' : 'polaroid';
+  return toJpeg(renderPicture(style, { photos: scene.pics.map((p) => p.img), picture: null, seed }));
 }
 
 function renderExport() {
@@ -1038,30 +993,7 @@ function queueExport() {
 }
 const resetExport = () => { exportBlob = null; exportPromise = null; exportScene = null; };
 
-function downloadBlob(blob, name) {
-  const url = URL.createObjectURL(blob);
-  const a = el('a', { href: url, download: name });
-  document.body.append(a);
-  a.click();
-  a.remove();
-  setTimeout(() => URL.revokeObjectURL(url), 10000);
-}
-
 const fileSlug = (s) => s.normalize('NFKD').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'mosaic';
-
-// Share sheet on phones (save to photos, post); a plain download on desktop.
-async function saveOrShare(blob, name, title) {
-  const file = new File([blob], name, { type: 'image/jpeg' });
-  if (matchMedia('(pointer: coarse)').matches && navigator.canShare?.({ files: [file] })) {
-    try {
-      await navigator.share({ files: [file], title });
-      return;
-    } catch (err) {
-      if (err.name === 'AbortError') return; // closed the share sheet
-    }
-  }
-  downloadBlob(blob, name);
-}
 
 $('export').addEventListener('click', async () => {
   const button = $('export');
@@ -1158,6 +1090,31 @@ function renderSaved() {
   }
 }
 const takeSavedUntil = (res) => { if (res && 'savedUntil' in res) data.savedUntil = res.savedUntil; };
+
+// Calendar reminders, made on this device in the page language (no email asked, nothing sent): the
+// year in review in early December, and, when there's a deletion date, a nudge to download a few
+// days before it. The page's own link never goes in: it's private, and calendars sync to clouds.
+const localDay = (ts) => {
+  const d = new Date(ts);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+};
+$('remind').addEventListener('click', () => {
+  const today = localDay(Date.now());
+  const reviewUrl = new URL(STATIC ? 'review/' : '/review', document.baseURI).href;
+  const events = [{
+    uid: `fanwall-review-${nextDecember(today)}@fanwall`, date: nextDecember(today),
+    summary: t('reveal.remind.reviewTitle'), description: t('reveal.remind.reviewText', { url: reviewUrl }), url: reviewUrl,
+  }];
+  if (data?.savedUntil) {
+    const before = localDay(Math.max(Date.now(), data.savedUntil - 4 * DAY));
+    events.push({
+      uid: `fanwall-download-${hashSeed(`${data.event.name}\u0000${data.cosplayer.name}`)}@fanwall`, date: before,
+      summary: t('reveal.remind.downloadTitle', { event: data.event.name }),
+      description: t('reveal.remind.downloadText', { date: formatDate(Math.max(data.savedUntil - DAY, Date.now())) }),
+    });
+  }
+  downloadBlob(new Blob([makeIcs(events)], { type: 'text/calendar' }), 'fanwall-reminders.ics');
+});
 
 // From the lightbox (reopen: back to it afterwards) or from a Manage row.
 function editPhoto(item, { reopen = false } = {}) {

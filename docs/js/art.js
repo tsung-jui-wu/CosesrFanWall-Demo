@@ -3,7 +3,37 @@
 // Layouts come from the pure planners (polaroid.js, constellation.js), in width units.
 import { PRINT_RATIO, PRINT_PHOTO } from './polaroid.js';
 
-const makeCanvas = (w, h) => Object.assign(document.createElement('canvas'), { width: w, height: h });
+export const makeCanvas = (w, h) => Object.assign(document.createElement('canvas'), { width: w, height: h });
+
+// Step-down halving through two reusable scratch canvases, so big reductions average pixels
+// instead of aliasing (and we don't allocate a canvas per step per tile). Synchronous: callers that
+// await between calls must not rely on the scratch canvases in between.
+const scratch = [];
+export function shrinkInto(dest, src, sx, sy, sw, sh, tw, th) {
+  if (!scratch.length) scratch.push(makeCanvas(1, 1), makeCanvas(1, 1));
+  let cur = src, cx = sx, cy = sy, cw = sw, ch = sh, flip = 0;
+  while (cw / 2 >= tw && ch / 2 >= th) {
+    const w = Math.round(cw / 2), h = Math.round(ch / 2);
+    const s = scratch[(flip ^= 1)];
+    if (s.width < w) s.width = w;
+    if (s.height < h) s.height = h;
+    const sctx = s.getContext('2d');
+    sctx.clearRect(0, 0, w, h);
+    sctx.drawImage(cur, cx, cy, cw, ch, 0, 0, w, h);
+    cur = s; cx = 0; cy = 0; cw = w; ch = h;
+  }
+  const dctx = dest.getContext('2d');
+  dctx.imageSmoothingQuality = 'high';
+  dctx.clearRect(0, 0, tw, th);
+  dctx.drawImage(cur, cx, cy, cw, ch, 0, 0, tw, th);
+}
+
+// Centered crop of a (w x h) image to the given aspect (width / height).
+export function coverCrop(w, h, aspect) {
+  if (w / h > aspect) { const cw = h * aspect; return [(w - cw) / 2, 0, cw, h]; }
+  const ch = w / aspect;
+  return [0, (h - ch) / 2, w, ch];
+}
 
 // Draws a pre-rendered piece centered at (x, y), turned by rot and scaled.
 export function drawPiece(g, piece, x, y, rot = 0, scale = 1, alpha = 1) {
