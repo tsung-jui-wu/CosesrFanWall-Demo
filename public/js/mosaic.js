@@ -88,13 +88,16 @@ export function targetCells(rgba, cols, rows) {
 // aspect = width / height of the target image.
 // Smaller sets reuse each photo more (up to 6x) to reach about `targetCells`, so 150 photos don't
 // give a chunky 450-cell grid. Beyond ~1000 cells a phone screen shows little more detail anyway.
+// A handful of photos gets the coarsest grid (minCells), every cell filled by reusing them.
+// At least `minSide` cells each way, so no tile is more than a sixth of the picture's width or height,
+// however tall or wide it is: a saved mosaic only ever shows fans' photos as small tiles.
 export function chooseGrid(n, aspect, opts = {}) {
-  const minCells = opts.minCells ?? 60, maxCells = opts.maxCells ?? 2400;
+  const minCells = opts.minCells ?? 60, maxCells = opts.maxCells ?? 2400, minSide = opts.minSide ?? 6;
   const reuse = opts.reuse ?? Math.max(n < 800 ? 2 : 1.5, Math.min(6, (opts.targetCells ?? 900) / Math.max(n, 1)));
   const cells = clamp(Math.round(n * reuse), minCells, maxCells);
-  const cols = Math.max(1, Math.round(Math.sqrt(cells * aspect)));
-  let rows = Math.max(1, Math.round(cells / cols));
-  if (cols * rows > maxCells) rows = Math.max(1, Math.floor(maxCells / cols));
+  const cols = Math.max(minSide, Math.round(Math.sqrt(cells * aspect)));
+  let rows = Math.max(minSide, Math.round(cells / cols));
+  if (cols * rows > maxCells) rows = Math.max(minSide, Math.floor(maxCells / cols));
   return { cols, rows };
 }
 
@@ -107,10 +110,11 @@ function shuffle(arr, rng) {
 }
 
 // ---------- plan ----------
-// tiles: [{ id, feature }] where feature is tileFeature() output.
-// Returns { mode: 'float'|'mosaic', cols, rows, coverage, maxReuse, cells, order, leftover }.
-// cells[i] (row-major) = { col, row, tileId|null, deltaE|null, tint: { rgb, alpha }, delay|null };
-// tileId null means a "ghost" cell where the faded base image shows through.
+// tiles: [{ id, feature }] where feature is tileFeature() output; at least one.
+// Returns { mode: 'mosaic', cols, rows, maxReuse, cells, order, leftover }.
+// cells[i] (row-major) = { col, row, tileId, deltaE, tint: { rgb, alpha }, delay }.
+// Every cell gets a tile, however few photos there are: a small set is reused across the grid rather
+// than leaving faded "ghost" cells, which would show at a glance how few photos arrived.
 export function planMosaic({ cols, rows, cellFeatures, meanRGB, tiles, opts = {}, seed = 1 }) {
   if (!Number.isInteger(cols) || !Number.isInteger(rows) || cols < 1 || rows < 1) {
     throw new Error('planMosaic: cols and rows must be positive integers');
@@ -119,21 +123,18 @@ export function planMosaic({ cols, rows, cellFeatures, meanRGB, tiles, opts = {}
   if (cellFeatures.length !== N * 12) throw new Error('planMosaic: cellFeatures must have cols*rows*12 values');
   if (meanRGB.length !== N * 3) throw new Error('planMosaic: meanRGB must have cols*rows*3 values');
   const n = tiles.length;
+  if (n < 1) throw new Error('planMosaic: needs at least one tile');
   const ids = tiles.map((t) => t.id);
-
-  if (n < (opts.minTiles ?? 12)) {
-    return { mode: 'float', cols, rows, coverage: 0, maxReuse: 0, cells: [], order: [], leftover: ids };
-  }
 
   const rng = mulberry32(hashSeed(seed));
   const minSpacing = opts.minSpacing ?? 4;
   const usagePenalty = opts.usagePenalty ?? 6;
   const spacingPenalty = opts.spacingPenalty ?? 40;
-  const coverage = clamp(n / 60, 0.3, 1);
 
-  // Saliency = ΔE from each cell's mean Lab to the *nearest* border cell color. (The plan's first
-  // version used the average border color, which fails on gradient backgrounds: a sky that runs from
-  // navy to purple averages to a middle tone, so plain bands at either end looked "salient".)
+  // Saliency = ΔE from each cell's mean Lab to the *nearest* border cell color: high on the subject.
+  // The fly-in starts there, so the subject appears first. (The first version used the average border
+  // color, which fails on gradient backgrounds: a sky that runs from navy to purple averages to a
+  // middle tone, so plain bands at either end looked "salient".)
   const mean = new Float32Array(N * 3);
   for (let c = 0; c < N; c++) {
     for (let k = 0; k < 3; k++) {
@@ -159,14 +160,10 @@ export function planMosaic({ cols, rows, cellFeatures, meanRGB, tiles, opts = {}
     sx += s * (c % cols); sy += s * ((c / cols) | 0); sw += s;
   }
 
-  // Fill the most salient cells first. Ties (flat areas) grow outward from the subject's centroid.
+  // The subject's centroid, weighted by saliency.
   const scx = sw ? sx / sw : (cols - 1) / 2, scy = sw ? sy / sw : (rows - 1) / 2;
-  const centerDist = (c) => ((c % cols) - scx) ** 2 + (((c / cols) | 0) - scy) ** 2;
-  const byPriority = Array.from({ length: N }, (_, c) => c)
-    .sort((a, b) => saliency[b] - saliency[a] || centerDist(a) - centerDist(b) || a - b);
-  const filledCount = clamp(Math.round(coverage * N), 1, N);
-  const filled = byPriority.slice(0, filledCount);
-  const maxReuse = Math.max(opts.maxReuse ?? 2, Math.ceil(filledCount / n));
+  const filled = Array.from({ length: N }, (_, c) => c);
+  const maxReuse = Math.max(opts.maxReuse ?? 2, Math.ceil(N / n));
 
   const tf = new Float32Array(n * 12);
   tiles.forEach((t, i) => {
@@ -216,18 +213,18 @@ export function planMosaic({ cols, rows, cellFeatures, meanRGB, tiles, opts = {}
     cell.tint.alpha = clamp(bestDE / 50, 0.08, 0.5);
   }
 
-  // Fly-in order: outward from the centroid of filled cells, with seeded jitter.
-  let cx = 0, cy = 0;
-  for (const c of filled) { cx += c % cols; cy += (c / cols) | 0; }
-  cx /= filledCount; cy /= filledCount;
-  const dist = (c) => Math.hypot((c % cols) - cx, ((c / cols) | 0) - cy);
+  // Fly-in order: the most salient cells first (the subject), then outward from its centroid, with
+  // seeded jitter so the edge of the growing picture isn't a hard line.
+  let maxS = 0;
+  for (let c = 0; c < N; c++) maxS = Math.max(maxS, saliency[c]);
+  const dist = (c) => Math.hypot((c % cols) - scx, ((c / cols) | 0) - scy);
   let maxDist = 0;
   for (const c of filled) maxDist = Math.max(maxDist, dist(c));
   const jitter = (opts.orderJitter ?? 0.15) * maxDist;
-  const key = new Map(filled.map((c) => [c, dist(c) + rng() * jitter]));
+  const key = new Map(filled.map((c) => [c, dist(c) * (1 - 0.5 * (maxS ? saliency[c] / maxS : 0)) + rng() * jitter]));
   const order = filled.slice().sort((a, b) => key.get(a) - key.get(b) || a - b);
   order.forEach((c, i) => { cells[c].delay = order.length > 1 ? i / (order.length - 1) : 0; });
 
   const leftover = ids.filter((_, t) => usage[t] === 0);
-  return { mode: 'mosaic', cols, rows, coverage, maxReuse, cells, order, leftover };
+  return { mode: 'mosaic', cols, rows, maxReuse, cells, order, leftover };
 }

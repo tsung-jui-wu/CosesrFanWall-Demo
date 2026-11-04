@@ -84,6 +84,17 @@ test('chooseGrid follows reuse rules, clamps, and keeps the aspect', () => {
   assert.ok(big.cols * big.rows > 2300);
 });
 
+test('no tile is ever more than a sixth of the picture across or down, whatever its shape', () => {
+  // A saved mosaic may be posted; fans agreed to appear in it as small tiles only.
+  for (const aspect of [0.2, 0.33, 0.5, 0.8, 1, 1.5, 2, 3, 5]) {
+    for (const n of [1, 3, 8, 12, 30, 150, 1500]) {
+      const { cols, rows } = chooseGrid(n, aspect);
+      assert.ok(cols >= 6 && rows >= 6, `aspect ${aspect}, n ${n}: ${cols}x${rows}`);
+      assert.ok(cols * rows <= 2400);
+    }
+  }
+});
+
 test('plan is deterministic for the same seed', () => {
   const a = setup(300, { seed: 'reveal-token-abc' }).plan;
   const b = setup(300, { seed: 'reveal-token-abc' }).plan;
@@ -147,24 +158,29 @@ test('reuse grows when tiles are scarce, and every filled cell still gets a tile
   assert.ok(Object.values(counts).every((k) => k <= plan.maxReuse));
 });
 
-test('fewer than 12 tiles gives float mode', () => {
-  const { plan, tiles } = setup(5);
-  assert.equal(plan.mode, 'float');
-  assert.deepEqual(plan.cells, []);
-  assert.deepEqual(plan.leftover, tiles.map((t) => t.id));
+test('every cell gets a tile, from a single photo up: no ghost cells, no float mode', () => {
+  for (const n of [1, 2, 3, 5, 8, 12, 30]) {
+    const { plan, tiles } = setup(n);
+    assert.equal(plan.mode, 'mosaic', `n=${n}`);
+    assert.equal(filledCells(plan).length, plan.cols * plan.rows, `n=${n}: every cell filled`);
+    assert.deepEqual(plan.leftover, [], `n=${n}: every photo is used`);
+    const counts = {};
+    for (const c of plan.cells) counts[c.tileId] = (counts[c.tileId] ?? 0) + 1;
+    assert.equal(Object.keys(counts).length, tiles.length);
+    assert.ok(Object.values(counts).every((k) => k <= plan.maxReuse), `n=${n}: reuse within maxReuse`);
+  }
+  assert.throws(() => planMosaic({ cols: 6, rows: 6, cellFeatures: new Float32Array(432), meanRGB: new Uint8Array(108), tiles: [] }));
 });
 
-test('partial coverage fills the subject first', () => {
+test('the fly-in starts on the subject', () => {
   const { plan, target } = setup(30);
-  assert.equal(plan.mode, 'mosaic');
-  assert.ok(plan.coverage < 1);
   const N = plan.cols * plan.rows;
-  const filled = filledCells(plan);
-  assert.equal(filled.length, Math.round(plan.coverage * N));
-  const discCells = plan.cells.filter((c) => target.isDisc(c.col, c.row));
-  assert.ok(discCells.length > 0);
-  assert.ok(discCells.every((c) => c.tileId !== null), 'every disc cell is filled');
-  assert.ok(plan.cells.some((c) => c.tileId === null), 'some background stays ghost');
+  const isDisc = (i) => target.isDisc(plan.cells[i].col, plan.cells[i].row);
+  const share = plan.cells.filter((c) => target.isDisc(c.col, c.row)).length / N;
+  const early = plan.order.slice(0, Math.round(N * share));
+  const hit = early.filter(isDisc).length / early.length;
+  assert.ok(share > 0.05 && share < 0.6, `disc covers ${share}`);
+  assert.ok(hit > 0.8, `the first ${early.length} tiles are ${Math.round(hit * 100)}% disc`);
 });
 
 test('leftover plus used ids equals all tile ids', () => {
@@ -186,10 +202,10 @@ test('order covers filled cells with delays from 0 to 1 and a tint per cell', ()
   for (const c of filled) assert.ok(c.tint.alpha >= 0.08 && c.tint.alpha <= 0.5);
 });
 
-test('partial coverage finds the subject on a gradient background', () => {
+test('the fly-in finds the subject on a gradient background', () => {
   // Black-to-white vertical gradient with a muted green disc. The disc is only moderately far from
   // the *average* border color (mid gray), while the dark top and light bottom rows are far from it;
-  // the subject must still fill first.
+  // the subject must still arrive first.
   const { cols, rows } = chooseGrid(30, 1.5);
   const W = cols * 2, H = rows * 2, r = 0.3 * Math.min(W, H);
   const rgba = new Uint8ClampedArray(W * H * 4);
@@ -202,7 +218,11 @@ test('partial coverage finds the subject on a gradient background', () => {
   }
   const { features, meanRGB } = targetCells(rgba, cols, rows);
   const plan = planMosaic({ cols, rows, cellFeatures: features, meanRGB, tiles: randomTiles(30), seed: 3 });
-  const discCells = plan.cells.filter((c) => [0, 1, 2, 3].every((q) => inDisc(c.col * 2 + (q & 1) + 0.5, c.row * 2 + (q >> 1) + 0.5)));
-  assert.ok(discCells.length > 0);
-  assert.ok(discCells.every((c) => c.tileId !== null), 'every disc cell is filled before plain background');
+  const disc = new Set(plan.cells.map((c, i) => [c, i])
+    .filter(([c]) => [0, 1, 2, 3].every((q) => inDisc(c.col * 2 + (q & 1) + 0.5, c.row * 2 + (q >> 1) + 0.5)))
+    .map(([, i]) => i));
+  assert.ok(disc.size > 0);
+  const early = plan.order.slice(0, disc.size);
+  const hit = early.filter((i) => disc.has(i)).length / early.length;
+  assert.ok(hit > 0.75, `the first ${early.length} tiles are ${Math.round(hit * 100)}% disc, not the dark or light bands`);
 });

@@ -1,11 +1,24 @@
-// Cosplayer reveal: photos fly in and assemble into a mosaic of the organizer's image; notes settle
-// around it. Everything is drawn on one canvas. The timeline is a pure function of elapsed time, so
+// Cosplayer reveal, in the event's style (styles.js): photos fly in and assemble into a mosaic of the
+// organizer's image, get pinned up on a wall as prints, or light up as a constellation; notes settle
+// around them. Everything is drawn on one canvas. The timeline is a pure function of elapsed time, so
 // skip, replay, and resize need no extra state.
 import { api, el, toast, loadBitmap, STATIC, segmentAfter } from './api.js';
 import { tileFeature, targetCells, chooseGrid, planMosaic, mulberry32, hashSeed } from './mosaic.js';
+import { planWall, PRINT_RATIO } from './polaroid.js';
+import { planSky } from './constellation.js';
+import { styleOf, pickPool, cycleItem, EXPORT } from './styles.js';
+import { drawPiece, paintWall, printPiece, paintSky, paintDust, paintLink, starPiece } from './art.js';
 import { renderEdited, photoBlob, openEditor } from './editor.js';
+import { t, lang, setText, setTitle, formatDate, onLangChange, useEventLang } from './i18n.js';
 
 const token = segmentAfter('r');
+// The organizer's preview (/admin/<token>/preview/<cosplayer>): the same page, view-only, reading
+// the organizer API. It's laid out with the cosplayer's own seed, so it matches what they'll see.
+const PREVIEW = Boolean(segmentAfter('preview'));
+const dataPath = PREVIEW
+  ? `/api/admin/${encodeURIComponent(segmentAfter('admin'))}/cosplayers/${encodeURIComponent(segmentAfter('preview'))}/preview`
+  : `/api/reveal/${encodeURIComponent(token)}`;
+let seed = token; // layouts and animations; set from the data once it loads
 const $ = (id) => document.getElementById(id);
 const canvas = $('stage');
 const ctx = canvas.getContext('2d');
@@ -14,12 +27,15 @@ const reduceMotion = matchMedia('(prefers-reduced-motion: reduce)');
 const BG = '#090909'; // matches --canvas in app.css
 const CARD_BG = '#141414'; // --surface-1
 const TILE_PX = 64; // tiles are pre-cut at this height; cells are almost always smaller
-const MIN_MOSAIC_TILES = 12; // matches planMosaic's default minTiles
+const PHOTO_PX = 256; // the wall's and the sky's photos are cut square at this size
+const POOL_MAX = 120; // the most photos a wall or sky takes turns through (a seeded pick of them)
 const GHOST_ALPHA = 0.3;
 const FLIGHT_MS = 1000;
 const TINT_MS = 500;
 const ENTER_MS = 1600;
-const CYCLE_MS = 4500;
+const CYCLE_MS = 4500; // a note slot moves on to the next note
+const PIECE_MS = 700; // a print or a star arriving
+const PIECE_CYCLE_MS = 2600; // a print or a star moves on to the next photo
 
 const clamp = (v, lo, hi) => Math.min(hi, Math.max(lo, v));
 const easeOut = (p) => 1 - (1 - p) ** 3;
@@ -94,22 +110,27 @@ async function thumbOf(item) {
   try { return renderEdited(bmp, item.edit); } finally { bmp.close(); }
 }
 
+// The scene's mode: 'mosaic', 'wall' (polaroid), 'sky' (constellation), or 'float' when there are only
+// notes. A mosaic needs a picture to assemble into; without one, its photos go up on a wall instead.
 async function prepare(onProgress) {
   await document.fonts?.ready; // note cards are drawn with Inter; don't cache them in a fallback font
-  const visible = data.items.filter((i) => !i.hidden);
+  const style = styleOf(data.event);
+  const visible = data.items.filter(shown);
   const photos = visible.filter((i) => i.thumbUrl);
   const notes = visible.filter((i) => i.message).map((item) => ({ kind: 'note', item }));
   const steps = photos.length + 2;
   let done = 0;
   const tick = (n = 1) => onProgress((done += n) / steps);
 
-  const base = data.baseUrl ? await loadBitmap(data.baseUrl).catch(() => null) : null;
+  const base = style === 'mosaic' && data.baseUrl ? await loadBitmap(data.baseUrl).catch(() => null) : null;
   tick();
-  const float = async (pics) => {
+  const look = style === 'polaroid' ? 'wall' : style === 'constellation' ? 'sky' : 'plain';
+  const float = () => {
     onProgress(1);
-    return buildScene({ mode: 'float', base, floaters: interleave(pics, notes), photoCount: photos.length, noteCount: notes.length });
+    return buildScene({ mode: 'float', look, base, floaters: notes });
   };
-  if (!base || photos.length < MIN_MOSAIC_TILES) return float(await floatPhotos(photos));
+  if (!photos.length) return float(); // only notes: nothing to assemble or pin up, and nothing to save
+  if (style !== 'mosaic' || !base) return prepareArt(style === 'constellation' ? 'sky' : 'wall', photos, notes, tick, onProgress);
 
   // Target: the base image at (2*cols) x (2*rows), one pixel per cell quadrant.
   const aspect = base.width / base.height;
@@ -141,9 +162,9 @@ async function prepare(onProgress) {
       tick();
     }
   })).filter(Boolean);
-  if (tiles.length < MIN_MOSAIC_TILES) return float(await floatPhotos(photos)); // too many failed to load
+  if (!tiles.length) return float(); // none of the photos would load
 
-  const plan = planMosaic({ cols, rows, cellFeatures: features, meanRGB, tiles, seed: token });
+  const plan = planMosaic({ cols, rows, cellFeatures: features, meanRGB, tiles, seed });
   // Photos the plan didn't use float with the notes.
   const leftover = new Set(plan.leftover);
   const extras = await floatPhotos(tiles.filter((t) => leftover.has(t.id)).map((t) => t.item));
@@ -151,15 +172,46 @@ async function prepare(onProgress) {
   return buildScene({
     mode: 'mosaic', base, plan, cols, rows, aspect,
     imgs: new Map(tiles.map((t) => [t.id, t.img])),
-    floaters: interleave(extras, notes), photoCount: tiles.length, noteCount: notes.length,
+    floaters: interleave(extras, notes),
   });
+}
+
+// The wall and the sky: a seeded pick of up to POOL_MAX photos, each cut square at PHOTO_PX. The layout
+// itself is planned per screen size (computeLayout), since it depends on the screen's shape.
+async function prepareArt(mode, photos, notes, tick, onProgress) {
+  const picks = pickPool(photos.length, POOL_MAX, seed).map((i) => photos[i]);
+  tick(photos.length - picks.length);
+  const pics = (await pool(picks, 6, async (item) => {
+    let bmp;
+    try {
+      bmp = await thumbOf(item);
+      const img = makeCanvas(PHOTO_PX, PHOTO_PX);
+      shrinkInto(img, bmp, ...coverCrop(bmp.width, bmp.height, 1), PHOTO_PX, PHOTO_PX);
+      return { item, img };
+    } catch {
+      return null;
+    } finally {
+      bmp?.close?.();
+      tick();
+    }
+  })).filter(Boolean);
+  onProgress(1);
+  if (!pics.length) return buildScene({ mode: 'float', look: mode, base: null, floaters: notes });
+  return buildScene({ mode, pics, floaters: notes });
 }
 
 // Per-cell flight paths and the timeline, all derived from the seed.
 function buildScene(s) {
-  const rng = mulberry32(hashSeed(token) ^ 0x9e3779b9);
+  const rng = mulberry32(hashSeed(seed) ^ 0x9e3779b9);
   s.floaterRot = s.floaters.map(() => (rng() - 0.5) * 0.16);
-  if (s.mode === 'mosaic') {
+  if (s.mode === 'wall' || s.mode === 'sky') {
+    // Prints are pinned up, or stars light up, over `spread` ms; then the notes arrive.
+    s.t0 = 400;
+    s.spread = s.mode === 'wall' ? 3200 : 3800;
+    s.tilesEnd = s.t0 + s.spread + PIECE_MS;
+    s.floatStart = s.tilesEnd - 600;
+    s.floatSpan = null;
+  } else if (s.mode === 'mosaic') {
     const N = s.cols * s.rows;
     s.start = new Float64Array(N);
     s.fly = new Float32Array(N * 4); // start x, start y (0..1 of stage), rotation, scale
@@ -184,6 +236,13 @@ function buildScene(s) {
 }
 
 // ---------- layout ----------
+// A full-canvas background painted once per layout instead of every frame.
+function backdropOf(paint, W, H) {
+  const c = makeCanvas(W, H);
+  paint(c.getContext('2d'), W, H);
+  return c;
+}
+
 function computeLayout() {
   const dpr = Math.min(2, window.devicePixelRatio || 1);
   const W = Math.round(canvas.clientWidth * dpr), H = Math.round(canvas.clientHeight * dpr);
@@ -240,6 +299,42 @@ function computeLayout() {
     const baseScaled = makeCanvas(Math.max(1, Math.round(w)), Math.max(1, Math.round(h)));
     shrinkInto(baseScaled, scene.base, 0, 0, scene.base.width, scene.base.height, baseScaled.width, baseScaled.height);
     Object.assign(lay, { rect, cardW, cardH, baseScaled });
+  } else if (scene.mode === 'wall') {
+    // The wall fills the band from edge to edge; notes are pinned over it. How many prints and note
+    // spots there are depends only on the screen, never on how many photos or notes arrived.
+    const cols = clamp(Math.round(W / (132 * dpr)), 3, 8);
+    const spots = Math.min(n, clamp(Math.round((W * UH) / (330 * dpr) ** 2), 1, 4));
+    const plan = planWall({ aspect: W / UH, cols, photos: scene.pics.length, seed, noteSpots: spots });
+    const cardW = Math.round(clamp((W / cols) * 1.5, 130 * dpr, 280 * dpr));
+    for (const s of plan.notes) {
+      lay.slots.push({
+        x: clamp(s.x * W, cardW / 2 + gap, W - cardW / 2 - gap),
+        y: clamp(top + s.y * W, top + cardW * 0.45, top + UH - cardW * 0.45),
+        rot: s.rot, pinned: true,
+      });
+    }
+    Object.assign(lay, {
+      cardW, cardH: Math.round(cardW * 0.75), plan, top, bandH: UH, bg: backdropOf(paintWall, W, H),
+      pieceW: (W / cols) * 0.94, pieces: new Map(), pieceCap: plan.prints.length + 12,
+    });
+  } else if (scene.mode === 'sky') {
+    // The sky fills the screen; the stars sit in the band, notes drift beside some of them.
+    const stars = clamp(Math.round((W * UH) / (155 * dpr) ** 2 / 2), 5, 12);
+    const radius = clamp(Math.min(W, UH) * 0.075, 26 * dpr, 52 * dpr) / W;
+    const plan = planSky({ aspect: W / UH, stars, radius, photos: scene.pics.length, seed, dust: 170, noteSpots: Math.min(n, 3) });
+    const cardW = Math.round(clamp(Math.min(W, H) * 0.32, 120 * dpr, 230 * dpr));
+    for (const s of plan.notes) {
+      const star = plan.stars[s.star];
+      const reach = star.r * W + cardW * 0.62;
+      lay.slots.push({
+        x: clamp(star.x * W + s.dx * reach, cardW / 2 + gap, W - cardW / 2 - gap),
+        y: clamp(top + star.y * W + s.dy * reach * 0.8, top + cardW * 0.4, top + UH - cardW * 0.4),
+      });
+    }
+    Object.assign(lay, {
+      cardW, cardH: Math.round(cardW * 0.75), plan, top, bg: backdropOf(paintSky, W, H),
+      starR: radius * 1.18 * W, pieces: new Map(), pieceCap: plan.stars.length + 12,
+    });
   } else {
     // Float mode: a jittered grid over the usable band.
     const maxK = clamp(Math.floor((W * UH) / (190 * dpr) ** 2), 4, 12);
@@ -247,7 +342,7 @@ function computeLayout() {
     const gc = Math.max(1, Math.ceil(Math.sqrt((K * W) / UH))), gr = Math.max(1, Math.ceil(K / gc));
     const cw = W / gc, ch = UH / gr;
     const cardW = Math.round(clamp(Math.min(cw, ch * 1.2) * 0.78, 90 * dpr, 300 * dpr));
-    const rng = mulberry32(hashSeed(token) + K);
+    const rng = mulberry32(hashSeed(seed) + K);
     for (let k = 0; k < K; k++) {
       const col = k % gc, row = Math.floor(k / gc);
       lay.slots.push({
@@ -260,14 +355,16 @@ function computeLayout() {
       backdrop = makeCanvas(W, H);
       shrinkInto(backdrop, scene.base, ...coverCrop(scene.base.width, scene.base.height, W / H), W, H);
     }
-    Object.assign(lay, { cardW, cardH: Math.round(cardW * 0.75), backdrop });
+    // Only notes, at a polaroid or constellation event: they still hang on the wall or in the sky.
+    const bg = scene.look === 'wall' ? backdropOf(paintWall, W, H) : scene.look === 'sky' ? backdropOf(paintSky, W, H) : null;
+    Object.assign(lay, { cardW, cardH: Math.round(cardW * 0.75), backdrop, bg });
   }
-  // Each slot enters from the nearest outside direction.
+  // Each slot enters from the nearest outside direction; a pinned note drops in from just above.
   const cx = W / 2, cy = H / 2, reach = 0.45 * Math.max(W, H);
   for (const s of lay.slots) {
     const dx = s.x - cx, dy = s.y - cy, d = Math.hypot(dx, dy) || 1;
-    s.fromX = s.x + (dx / d) * reach;
-    s.fromY = s.y + (dy / d) * reach;
+    s.fromX = s.pinned ? s.x : s.x + (dx / d) * reach;
+    s.fromY = s.pinned ? s.y - 40 * dpr : s.y + (dy / d) * reach;
   }
   const K = lay.slots.length;
   lay.floatGap = K ? (scene.floatSpan ?? K * 300) / K : 0;
@@ -278,6 +375,8 @@ function computeLayout() {
 }
 
 // ---------- cards (notes and floating photos) ----------
+// Chinese closing punctuation never starts a line; it hangs at the end of the one before instead.
+const NO_LINE_START = /[，。、！？：；」』）》〉】…]/;
 function wrapText(c, text, maxW, maxLines) {
   const chars = Array.from(text.replace(/\s+/g, ' ').trim());
   const lines = [];
@@ -285,7 +384,7 @@ function wrapText(c, text, maxW, maxLines) {
   let i = 0;
   for (; i < chars.length && lines.length < maxLines; i++) {
     const test = line + chars[i];
-    if (!line || c.measureText(test).width <= maxW) { line = test; continue; }
+    if (!line || c.measureText(test).width <= maxW || NO_LINE_START.test(chars[i])) { line = test; continue; }
     const cut = chars[i] === ' ' ? -1 : line.lastIndexOf(' ');
     if (cut > 0) { lines.push(line.slice(0, cut)); line = line.slice(cut + 1) + chars[i]; }
     else { lines.push(line.trimEnd()); line = chars[i] === ' ' ? '' : chars[i]; }
@@ -300,18 +399,30 @@ function wrapText(c, text, maxW, maxLines) {
   return lines;
 }
 
-const FONT = 'Inter, system-ui, -apple-system, "Segoe UI", sans-serif';
+// The page's own font stack (--font-body in app.css), so a note in Chinese draws with the same CJK
+// fonts, in the right Simplified or Traditional shapes, as the page around it.
+const fontStack = () => getComputedStyle(document.documentElement).getPropertyValue('--font-body').trim() || 'sans-serif';
 
-// Charcoal cards with rounded corners: a photo fills its card; a note is white text, name in gray.
+// Card looks: charcoal (mosaic), paper with tape pinned on the wall, dark glass in the sky.
+const CARD_LOOK = {
+  plain: { bg: CARD_BG, ink: '#ffffff', sub: '#999999', edge: 'rgba(255,255,255,0.08)', round: 0.1 },
+  wall: { bg: '#f6f0e1', ink: '#2b2620', sub: '#7a6f62', edge: 'rgba(0,0,0,0.06)', round: 0.02, tape: true },
+  sky: { bg: 'rgba(14, 18, 42, 0.92)', ink: '#ffffff', sub: '#aab4d8', edge: 'rgba(170, 190, 255, 0.28)', round: 0.12 },
+};
+const cardLook = () => CARD_LOOK[scene.look ?? scene.mode] ?? CARD_LOOK.plain;
+
+// Rounded cards: a photo fills its card; a note is its text with the name below, in the card's look.
 function renderCard(f) {
+  const FONT = fontStack();
+  const look = cardLook();
   const { cardW: w, cardH: h, dpr } = L;
-  const m = Math.round(16 * dpr); // room for the shadow
-  const r = Math.round(Math.min(w, h) * 0.1);
+  const m = Math.round(16 * dpr); // room for the shadow and the tape
+  const r = Math.round(Math.min(w, h) * look.round);
   const c = makeCanvas(w + 2 * m, h + 2 * m);
   const g = c.getContext('2d');
   const box = () => { g.beginPath(); if (g.roundRect) g.roundRect(m, m, w, h, r); else g.rect(m, m, w, h); };
   g.shadowColor = 'rgba(0,0,0,0.5)'; g.shadowBlur = 16 * dpr; g.shadowOffsetY = 6 * dpr;
-  g.fillStyle = CARD_BG;
+  g.fillStyle = look.bg;
   box(); g.fill();
   g.shadowColor = 'transparent';
   if (f.kind === 'photo') {
@@ -325,7 +436,7 @@ function renderCard(f) {
     const lh = Math.round(fs * 1.3);
     const hasName = Boolean(f.item.name);
     const maxLines = Math.max(1, Math.floor((h - 2 * pad - (hasName ? lh * 1.2 : 0)) / lh));
-    g.fillStyle = '#ffffff';
+    g.fillStyle = look.ink;
     g.font = `400 ${fs}px ${FONT}`;
     g.textBaseline = 'top';
     const lines = wrapText(g, f.item.message, w - 2 * pad, maxLines);
@@ -333,14 +444,20 @@ function renderCard(f) {
     let y = m + Math.max(pad, (h - block) / 2);
     for (const line of lines) { g.fillText(line, m + pad, y); y += lh; }
     if (hasName) {
-      g.fillStyle = '#999999';
+      g.fillStyle = look.sub;
       g.font = `500 ${Math.round(fs * 0.85)}px ${FONT}`;
       g.fillText(f.item.name, m + pad, y + lh * 0.2);
     }
   }
-  g.strokeStyle = 'rgba(255,255,255,0.08)'; // the faint light edge of a floating card
+  g.strokeStyle = look.edge; // the faint edge of a floating card
   g.lineWidth = Math.max(1, dpr * 0.75);
   box(); g.stroke();
+  if (look.tape) {
+    g.translate(m + w / 2, m);
+    g.rotate(0.04);
+    g.fillStyle = 'rgba(232, 222, 190, 0.8)';
+    g.fillRect(-w * 0.14, -h * 0.07, w * 0.28, h * 0.14);
+  }
   return c;
 }
 
@@ -350,20 +467,25 @@ function card(idx) {
   return c;
 }
 
-// Which floater slot k shows at time t, and its opacity. After the reveal settles, one slot at a
-// time crossfades to the next unseen item, so every note gets its turn.
-function slotContent(k, t) {
-  const K = L.slots.length, len = scene.floaters.length;
-  const cycle0 = L.end + 2500;
-  if (len <= K || t < cycle0) return [k, 1];
-  const elapsed = t - cycle0;
-  const c = Math.floor(elapsed / CYCLE_MS), local = elapsed - c * CYCLE_MS;
-  const latest = (upto) => (upto < k ? k : (K + k + K * Math.floor((upto - k) / K)) % len);
-  if (c % K !== k) return [latest(c), 1];
-  if (local < 600) return [latest(c - 1), 1 - local / 600];
-  if (local < 1200) return [latest(c), (local - 600) / 600];
-  return [latest(c), 1];
+// When len items take turns in K slots, one slot moving on every `period` ms from `ms` = 0 (styles.js
+// cycleItem): what slot k shows, what it showed before, and how far through the change it is (f, 0..1).
+function turn(k, ms, K, len, period, fadeMs) {
+  if (len <= K || ms < 0) return { item: k % len, prev: k % len, f: 1 };
+  const c = Math.floor(ms / period), local = ms - c * period;
+  const item = cycleItem(k, c + 1, K, len);
+  if (c % K !== k || local >= fadeMs) return { item, prev: item, f: 1 };
+  return { item, prev: cycleItem(k, c, K, len), f: local / fadeMs };
 }
+
+// Which floater slot k shows at time t, and its opacity. After the reveal settles, one slot at a
+// time fades to the next unseen item, so every note gets its turn.
+function slotContent(k, t) {
+  const r = turn(k, t - (L.end + 2500), L.slots.length, scene.floaters.length, CYCLE_MS, 1200);
+  return r.f < 0.5 ? [r.prev, 1 - 2 * r.f] : [r.item, 2 * r.f - 1];
+}
+
+// The wall's prints and the sky's stars take turns through the photos the same way, crossfading.
+const pieceTurn = (k, t, K) => turn(k, t - (L.end + 1500), K, scene.pics.length, PIECE_CYCLE_MS, 900);
 
 // ---------- drawing ----------
 function cellBox(i) {
@@ -442,16 +564,81 @@ function drawMosaic(t) {
 }
 
 function drawBackdrop(t) {
+  if (L.bg) { ctx.drawImage(L.bg, 0, 0); return; } // only notes, on the wall or in the sky
   if (!L.backdrop) return;
   ctx.globalAlpha = 0.35 * clamp(t / 800, 0, 1);
   ctx.drawImage(L.backdrop, 0, 0);
   ctx.globalAlpha = 1;
 }
 
+// ---------- the wall and the sky ----------
+// Prints and stars are drawn once per photo and kept; the cache holds about what's on screen, so a
+// big set doesn't fill a phone's canvas memory while the pieces take turns.
+function piece(key, make) {
+  let c = L.pieces.get(key);
+  if (c) { L.pieces.delete(key); L.pieces.set(key, c); return c; } // most recently used goes last
+  c = make();
+  L.pieces.set(key, c);
+  if (L.pieces.size > L.pieceCap) L.pieces.delete(L.pieces.keys().next().value);
+  return c;
+}
+const printOf = (photo) => piece(`p${photo}`, () => printPiece(scene.pics[photo].img, L.pieceW));
+const starOf = (photo) => piece(`s${photo}`, () => starPiece(scene.pics[photo].img, L.starR));
+
+// Which photo print or star i shows at time t: its planned one, or, when there are more photos than
+// pieces, its turn in the cycle (crossfading from the one before).
+const pieceShows = (i, own, K, t) => (scene.pics.length <= K ? { item: own, prev: own, f: 1 } : pieceTurn(i, t, K));
+
+// Draws piece i (arriving `a`, 0..1) with its photo crossfading: the old one, then the new one over it.
+function drawTurning(make, s, x, y, rot, scale, a) {
+  if (s.f < 1) drawPiece(ctx, make(s.prev), x, y, rot, scale, a);
+  drawPiece(ctx, make(s.item), x, y, rot, scale, a * s.f);
+}
+
+function drawWall(t) {
+  const { W, plan, top, dpr } = L;
+  ctx.drawImage(L.bg, 0, 0);
+  // The wall runs past its band's edges; keep it clear of the caption above and the buttons below.
+  ctx.save();
+  ctx.beginPath();
+  ctx.rect(0, top, W, L.bandH);
+  ctx.clip();
+  const P = plan.prints.length;
+  plan.prints.forEach((p, i) => {
+    const a = clamp((t - (scene.t0 + p.delay * scene.spread)) / PIECE_MS, 0, 1);
+    if (a === 0) return;
+    const e = easeOut(a); // each print drops onto the wall and settles
+    const scale = ((p.w * W) / L.pieceW) * (1 + (1 - e) * 0.18);
+    drawTurning(printOf, pieceShows(i, p.photo, P, t), p.x * W, top + p.y * W - (1 - e) * 30 * dpr, p.rot + (1 - e) * 0.25, scale, a);
+  });
+  ctx.restore();
+}
+
+function drawSky(t) {
+  const { W, H, plan, top, dpr } = L;
+  const still = reduceMotion.matches;
+  ctx.drawImage(L.bg, 0, 0);
+  paintDust(ctx, plan.dust, plan.height, W, H, t, still, clamp(t / 1200, 0, 1));
+  const lit = (s) => clamp((t - (scene.t0 + s.delay * scene.spread)) / PIECE_MS, 0, 1);
+  for (const [a, b] of plan.links) {
+    // Each line draws itself toward the later of its two stars as that star lights up.
+    const [from, to] = plan.stars[a].delay <= plan.stars[b].delay ? [plan.stars[a], plan.stars[b]] : [plan.stars[b], plan.stars[a]];
+    paintLink(ctx, from.x * W, top + from.y * W, to.x * W, top + to.y * W, lit(to), Math.max(1, dpr));
+  }
+  const K = plan.stars.length;
+  plan.stars.forEach((s, i) => {
+    const a = lit(s);
+    if (a === 0) return;
+    const pulse = still ? 1 : 1 + 0.03 * Math.sin(t / 1300 + i * 1.7);
+    const scale = ((s.r * W) / L.starR) * (0.6 + 0.4 * easeOut(a)) * pulse;
+    drawTurning(starOf, pieceShows(i, s.photo, K, t), s.x * W, top + s.y * W, 0, scale, a);
+  });
+}
+
 function drawFloaters(t) {
   const still = reduceMotion.matches;
-  const bob = (scene.mode === 'float' ? 10 : 3) * L.dpr;
-  const sway = scene.mode === 'float' ? 0.04 : 0.015;
+  const bob = (scene.mode === 'float' ? 10 : scene.mode === 'sky' ? 8 : 3) * L.dpr;
+  const sway = scene.mode === 'float' ? 0.04 : scene.mode === 'sky' ? 0.03 : 0.015;
   for (let k = 0; k < L.slots.length; k++) {
     const slot = L.slots[k];
     const p = clamp((t - (scene.floatStart + k * L.floatGap)) / ENTER_MS, 0, 1);
@@ -459,9 +646,10 @@ function drawFloaters(t) {
     const [idx, alpha] = slotContent(k, t);
     const c = card(idx);
     const e = easeOut(p);
+    const moving = !still && !slot.pinned; // pinned notes stay put
     const x = slot.fromX + (slot.x - slot.fromX) * e;
-    const y = slot.fromY + (slot.y - slot.fromY) * e + (still ? 0 : Math.sin(t / 1700 + k * 1.3) * bob);
-    const r = scene.floaterRot[idx] + (still ? 0 : Math.sin(t / 2300 + k) * sway);
+    const y = slot.fromY + (slot.y - slot.fromY) * e + (moving ? Math.sin(t / 1700 + k * 1.3) * bob : 0);
+    const r = (slot.rot ?? scene.floaterRot[idx]) + (moving ? Math.sin(t / 2300 + k) * sway : 0);
     ctx.globalAlpha = alpha * Math.min(1, p * 2);
     ctx.setTransform(Math.cos(r), Math.sin(r), -Math.sin(r), Math.cos(r), x, y);
     ctx.drawImage(c, -c.width / 2, -c.height / 2);
@@ -529,6 +717,25 @@ function itemAt(px, py) {
       if (Math.abs(px - slot.x) <= c.width / 2 - m && Math.abs(py - slot.y) <= c.height / 2 - m) return scene.floaters[idx].item;
     }
   }
+  if (scene.mode === 'wall') {
+    // The topmost print under the point, in the print's own turned frame.
+    const { W, plan, top } = L, t = elapsed();
+    if (py < top || py > top + L.bandH) return null; // that part of the wall is clipped away
+    for (let i = plan.prints.length - 1; i >= 0; i--) {
+      const p = plan.prints[i], w = p.w * W;
+      const dx = px - p.x * W, dy = py - (top + p.y * W);
+      const lx = dx * Math.cos(p.rot) + dy * Math.sin(p.rot), ly = -dx * Math.sin(p.rot) + dy * Math.cos(p.rot);
+      if (Math.abs(lx) <= w / 2 && Math.abs(ly) <= (w * PRINT_RATIO) / 2) {
+        return scene.pics[pieceShows(i, p.photo, plan.prints.length, t).item].item;
+      }
+    }
+    return null;
+  }
+  if (scene.mode === 'sky') {
+    const { W, plan, top } = L, t = elapsed();
+    const i = plan.stars.findIndex((s) => Math.hypot(px - s.x * W, py - (top + s.y * W)) <= s.r * W * 1.25);
+    return i < 0 ? null : scene.pics[pieceShows(i, plan.stars[i].photo, plan.stars.length, t).item].item;
+  }
   if (scene.mode !== 'mosaic') return null;
   const { rect } = L;
   const x = (px - view.x) / view.s, y = (py - view.y) / view.s;
@@ -548,7 +755,7 @@ function openItem(item) {
   $('lb-actions').hidden = !item.fullUrl;
   img.removeAttribute('src');
   if (item.fullUrl) {
-    img.alt = item.message ? 'Photo from a fan' : 'Photo from a fan, no message';
+    img.alt = t(item.message ? 'reveal.lb.photoAlt' : 'reveal.lb.photoAltNoMessage');
     const entry = (lb = { item, blob: null, url: null });
     entry.promise = photoBlob(item).then((b) => { entry.blob = b; return b; });
     entry.promise.catch(() => {}); // reported when Save photo is pressed
@@ -562,7 +769,7 @@ function openItem(item) {
     }
   }
   $('lb-message').textContent = item.message;
-  $('lb-name').textContent = item.name ? `— ${item.name}` : '';
+  $('lb-name').textContent = item.name ? t('reveal.from', { name: item.name }) : '';
   $('lightbox').showModal();
 }
 function closeLightboxPhoto() {
@@ -578,10 +785,10 @@ $('lb-save').addEventListener('click', async () => {
   button.disabled = true;
   try {
     const blob = entry.blob ?? (await entry.promise);
-    await saveOrShare(blob, `fanwall-${fileSlug(data.cosplayer.name)}-${entry.item.id.slice(0, 6)}.jpg`, `From your fans at ${data.event.name}`);
+    await saveOrShare(blob, `fanwall-${fileSlug(data.cosplayer.name)}-${entry.item.id.slice(0, 6)}.jpg`, t('reveal.share.photo', { event: data.event.name }));
   } catch (err) {
     console.error(err);
-    toast("Couldn't save the photo. Try again.", { error: true });
+    toast(t('reveal.toast.savePhotoFailed'), { error: true });
   } finally {
     button.disabled = false;
   }
@@ -679,6 +886,8 @@ function frame(now) {
   if (scene.mode === 'mosaic' && view.s > 1) drawZoomed();
   else {
     if (scene.mode === 'mosaic') drawMosaic(t);
+    else if (scene.mode === 'wall') drawWall(t);
+    else if (scene.mode === 'sky') drawSky(t);
     else drawBackdrop(t);
     drawFloaters(t);
   }
@@ -689,9 +898,7 @@ function frame(now) {
     canvas.classList.toggle('zoomable', done && scene.mode === 'mosaic');
     if (done && !hintShown) {
       hintShown = true;
-      $('zoom-hint').textContent = scene.mode === 'mosaic'
-        ? 'Pinch or scroll to zoom. Tap a photo or note to open it.'
-        : 'Tap a photo or note to open it.';
+      setText($('zoom-hint'), scene.mode === 'mosaic' ? 'reveal.hint.zoom' : 'reveal.hint.tap');
       $('zoom-hint').hidden = false;
       setTimeout(() => { $('zoom-hint').hidden = true; }, 6000);
     }
@@ -757,12 +964,42 @@ for (const d of document.querySelectorAll('dialog')) {
 
 // ---------- export ----------
 // Rendered ahead of time: phones only allow the share sheet right after a tap, so the file must be
-// ready when the button is pressed. Contains the small tiles only, never full-size photos.
+// ready when the button is pressed. Whatever the style, a saved image holds the picture only: fans'
+// photos as small tiles (no bigger than EXPORT_MAX_PHOTO of the image's width, see styles.js), and
+// never their notes or names, which their consent doesn't cover. So there's nothing to save when the
+// page has notes only.
 const EXPORT_PX = 2160;
 let exportBlob = null, exportPromise = null, exportScene = null; // tied to one scene
+const canSave = () => Boolean(scene) && scene.mode !== 'float';
+const toJpeg = (c) => new Promise((resolve, reject) => c.toBlob((b) => (b ? resolve(b) : reject(new Error('toBlob failed'))), 'image/jpeg', 0.92));
+
+// The wall or the sky at 4:5, planned for the saved size (styles.js EXPORT), drawn as on screen.
+function renderArtExport() {
+  const s = scene, { width: w, height: h } = EXPORT;
+  const c = makeCanvas(w, h);
+  const g = c.getContext('2d');
+  g.imageSmoothingQuality = 'high';
+  const made = new Map(); // photo -> piece, drawn once each
+  const once = (key, make) => made.get(key) ?? made.set(key, make()).get(key);
+  if (s.mode === 'wall') {
+    paintWall(g, w, h);
+    const plan = planWall({ aspect: w / h, photos: s.pics.length, seed, ...EXPORT.polaroid });
+    const base = w / EXPORT.polaroid.cols * 0.94;
+    for (const p of plan.prints) drawPiece(g, once(p.photo, () => printPiece(s.pics[p.photo].img, base)), p.x * w, p.y * w, p.rot, (p.w * w) / base);
+  } else {
+    paintSky(g, w, h);
+    const plan = planSky({ aspect: w / h, photos: s.pics.length, seed, dust: 260, ...EXPORT.constellation });
+    paintDust(g, plan.dust, plan.height, w, h, 0, true);
+    for (const [a, b] of plan.links) paintLink(g, plan.stars[a].x * w, plan.stars[a].y * w, plan.stars[b].x * w, plan.stars[b].y * w, 1, w / 600);
+    const base = EXPORT.constellation.radius * 1.18 * w;
+    for (const st of plan.stars) drawPiece(g, once(st.photo, () => starPiece(s.pics[st.photo].img, base)), st.x * w, st.y * w, 0, (st.r * w) / base);
+  }
+  return toJpeg(c);
+}
 
 function renderExport() {
   const s = scene;
+  if (s.mode !== 'mosaic') return renderArtExport();
   const w = s.aspect >= 1 ? EXPORT_PX : Math.round(EXPORT_PX * s.aspect);
   const h = s.aspect >= 1 ? Math.round(EXPORT_PX / s.aspect) : EXPORT_PX;
   const c = makeCanvas(w, h);
@@ -782,7 +1019,7 @@ function renderExport() {
     g.fillStyle = s.tint[i];
     g.fillRect(x0, y0, x1 - x0, y1 - y0);
   }
-  return new Promise((resolve, reject) => c.toBlob((b) => (b ? resolve(b) : reject(new Error('toBlob failed'))), 'image/jpeg', 0.92));
+  return toJpeg(c);
 }
 
 // A rebuild (after hiding or deleting) makes a new scene, so an image for the old one is never reused.
@@ -793,7 +1030,7 @@ function makeExport() {
   return exportPromise;
 }
 function queueExport() {
-  if (scene?.mode !== 'mosaic' || (exportScene === scene && exportPromise)) return;
+  if (!canSave() || (exportScene === scene && exportPromise)) return;
   const s = scene;
   setTimeout(() => {
     if (scene === s) makeExport().catch(() => { if (exportScene === s) exportPromise = null; });
@@ -831,10 +1068,10 @@ $('export').addEventListener('click', async () => {
   button.disabled = true;
   try {
     const blob = (exportScene === scene && exportBlob) || (await makeExport());
-    await saveOrShare(blob, `fanwall-${fileSlug(data.cosplayer.name)}.jpg`, `Thank you, ${data.cosplayer.name}`);
+    await saveOrShare(blob, `fanwall-${fileSlug(data.cosplayer.name)}.jpg`, t('reveal.thankYou', { name: data.cosplayer.name }));
   } catch (err) {
     console.error(err);
-    toast("Couldn't make the image. Try again.", { error: true });
+    toast(t('reveal.toast.exportFailed'), { error: true });
   } finally {
     button.disabled = false;
   }
@@ -842,56 +1079,122 @@ $('export').addEventListener('click', async () => {
 
 // ---------- manage ----------
 let dirty = false;
-const describe = (item) => (item.message ? `note “${Array.from(item.message).slice(0, 40).join('')}${Array.from(item.message).length > 40 ? '…' : ''}”` : 'photo');
+// "Only my favorites": the picture, Save image, and the download show just the starred items. A
+// convenience remembered on this device only; it has no effect while nothing visible is starred.
+const FAV_KEY = `fanwall:favorites-only:${token}`;
+let favoritesOnly = (() => { try { return localStorage.getItem(FAV_KEY) === '1'; } catch { return false; } })();
+const favOn = () => favoritesOnly && Boolean(data?.items.some((i) => i.favorite && !i.hidden));
+const shown = (i) => !i.hidden && (!favOn() || i.favorite);
+const describe = (item) => (item.message
+  ? t('reveal.what.note', { text: `${Array.from(item.message).slice(0, 40).join('')}${Array.from(item.message).length > 40 ? '…' : ''}` })
+  : t('reveal.what.photo'));
 
 function itemRow(item) {
   const what = describe(item);
   return el('li', { class: item.hidden ? 'is-hidden' : '', 'data-id': item.id },
     item.thumbUrl
-      ? el('button', { type: 'button', class: 'thumb', 'aria-label': `Open ${what}`, onclick: () => openItem(item) },
+      ? el('button', { type: 'button', class: 'thumb', 'aria-label': t('reveal.row.openLabel', { what }), onclick: () => openItem(item) },
         el('img', { src: item.thumbUrl, alt: '', loading: 'lazy' }))
       : null,
     el('div', { class: 'text' },
-      el('div', { text: item.message || 'Photo' }),
-      item.name ? el('div', { class: 'who', text: `— ${item.name}` }) : null,
-      item.hidden || item.edit ? el('div', { class: 'who', text: [item.hidden && 'Hidden', item.edit && 'Edited'].filter(Boolean).join(' · ') }) : null),
+      el('div', { text: item.message || t('reveal.row.photo') }),
+      item.name ? el('div', { class: 'who', text: t('reveal.from', { name: item.name }) }) : null,
+      item.hidden || item.edit || item.favorite
+        ? el('div', {
+          class: 'who',
+          text: [item.favorite && t('reveal.row.favorite'), item.hidden && t('reveal.row.hidden'), item.edit && t('reveal.row.edited')].filter(Boolean).join(' · '),
+        })
+        : null),
     el('div', { class: 'acts' },
       item.fullUrl
-        ? el('button', { type: 'button', 'data-act': 'edit', text: 'Edit', 'aria-label': `Edit ${what}`, onclick: () => editPhoto(item) })
+        ? el('button', { type: 'button', 'data-act': 'edit', text: t('reveal.row.edit'), 'aria-label': t('reveal.row.editLabel', { what }), onclick: () => editPhoto(item) })
         : null,
       el('button', {
-        type: 'button', 'data-act': 'hide', text: item.hidden ? 'Show' : 'Hide',
-        'aria-label': `${item.hidden ? 'Show' : 'Hide'} ${what}`, onclick: () => setHidden(item, !item.hidden),
+        type: 'button', class: 'star', 'data-act': 'fav', text: item.favorite ? '★' : '☆', 'aria-pressed': String(Boolean(item.favorite)),
+        'aria-label': t('reveal.row.favLabel', { what }), onclick: () => setFavorite(item, !item.favorite),
       }),
-      el('button', { type: 'button', class: 'danger', text: 'Delete', 'aria-label': `Delete ${what}`, onclick: () => deleteItem(item) })));
+      el('button', {
+        type: 'button', 'data-act': 'hide', text: t(item.hidden ? 'reveal.row.show' : 'reveal.row.hide'),
+        'aria-label': t(item.hidden ? 'reveal.row.showLabel' : 'reveal.row.hideLabel', { what }), onclick: () => setHidden(item, !item.hidden),
+      }),
+      el('button', { type: 'button', class: 'danger', text: t('common.delete'), 'aria-label': t('reveal.row.deleteLabel', { what }), onclick: () => deleteItem(item) })));
 }
+
+// The ZIP's own words (gallery page, messages.txt) are in the page language, and its date is on this
+// device's calendar. With "only my favorites" on, it holds just the starred items.
+const zipUrl = () => `/api/reveal/${encodeURIComponent(token)}/download.zip?lang=${encodeURIComponent(lang)}&tz=${new Date().getTimezoneOffset()}${favOn() ? '&only=favorites' : ''}`;
+const canDownload = () => !STATIC && !PREVIEW && data?.ready && data.items.some(shown); // the ZIP is built by the server
 
 function renderManage(focusId = null, focusAct = 'hide') {
   const items = data.items ?? [];
-  $('items').replaceChildren(...(items.length ? items.map(itemRow) : [el('li', { class: 'muted', text: 'Nothing here yet.' })]));
-  $('download-row').hidden = STATIC || !data.ready || !items.some((i) => !i.hidden); // the ZIP is built by the server
-  $('download').href = `/api/reveal/${encodeURIComponent(token)}/download.zip`;
+  $('items').replaceChildren(...(items.length ? items.map(itemRow) : [el('li', { class: 'muted', text: t('reveal.manage.empty') })]));
+  $('fav-row').hidden = !items.some((i) => i.favorite && !i.hidden);
+  $('fav-only').checked = favOn();
+  $('download-row').hidden = !canDownload();
+  $('download').href = zipUrl();
   $('optout-confirm').hidden = true;
   $('optout-start').hidden = false;
+  renderSaved();
   if (focusId) $('items').querySelector(`li[data-id="${CSS.escape(focusId)}"] [data-act="${focusAct}"]`)?.focus();
 }
+
+// "Saved until", on the intro card and at the top of Manage. The server sends when the first item
+// that isn't hidden will be deleted; the date shown is the day before, so it names the last whole
+// day that is still safe. No countdown: in the final week the line only stands out more, with a
+// download next to it.
+const DAY = 86400e3;
+const SOON_MS = 7 * DAY;
+function renderSaved() {
+  const until = data?.ready ? data.savedUntil ?? null : null;
+  const soon = until !== null && until - Date.now() <= SOON_MS;
+  for (const line of [$('intro-saved'), $('manage-saved')]) {
+    line.hidden = until === null;
+    if (until === null) continue;
+    line.classList.toggle('soon', soon);
+    line.querySelector('.saved-text').textContent = t('reveal.saved.until', { date: formatDate(Math.max(until - DAY, Date.now())) });
+    const dl = line.querySelector('.saved-dl');
+    dl.hidden = !soon || !canDownload();
+    dl.href = zipUrl();
+  }
+}
+const takeSavedUntil = (res) => { if (res && 'savedUntil' in res) data.savedUntil = res.savedUntil; };
 
 // From the lightbox (reopen: back to it afterwards) or from a Manage row.
 function editPhoto(item, { reopen = false } = {}) {
   openEditor({ load: () => loadBitmap(item.fullUrl), edit: item.edit }, {
     save: async (edit) => (await api(`/api/reveal/${encodeURIComponent(token)}/items/${encodeURIComponent(item.id)}/edit`, { method: 'POST', json: { edit } })).edit,
     onClose: (saved, edit) => {
-      if (saved) { item.edit = edit; itemsChanged(); toast('Edit saved.'); }
+      if (saved) { item.edit = edit; itemsChanged(); toast(t('reveal.toast.editSaved')); }
       if (reopen) openItem(item);
       else if ($('manage').open) renderManage(item.id, 'edit');
     },
   });
 }
 
+// Stars: private to the cosplayer. With "only my favorites" on, a star changes what's shown.
+async function setFavorite(item, favorite) {
+  try {
+    const res = await api(`/api/reveal/${encodeURIComponent(token)}/items/${encodeURIComponent(item.id)}`, { method: 'POST', json: { favorite } });
+    item.favorite = res.favorite ?? favorite;
+    if (favoritesOnly) dirty = true;
+    renderManage(item.id, 'fav');
+  } catch (err) {
+    toast(err.message, { error: true });
+  }
+}
+
+$('fav-only').addEventListener('change', (e) => {
+  favoritesOnly = e.target.checked;
+  try { localStorage.setItem(FAV_KEY, favoritesOnly ? '1' : ''); } catch {}
+  dirty = true;
+  renderManage();
+});
+
 async function setHidden(item, hidden) {
   try {
-    await api(`/api/reveal/${encodeURIComponent(token)}/items/${encodeURIComponent(item.id)}`, { method: 'POST', json: { hidden } });
+    const res = await api(`/api/reveal/${encodeURIComponent(token)}/items/${encodeURIComponent(item.id)}`, { method: 'POST', json: { hidden } });
     item.hidden = hidden;
+    takeSavedUntil(res);
     dirty = true;
     renderManage(item.id);
   } catch (err) {
@@ -900,14 +1203,15 @@ async function setHidden(item, hidden) {
 }
 
 async function deleteItem(item) {
-  if (!confirm(`Delete this ${item.message ? 'note' : 'photo'} for good? This can't be undone.`)) return;
+  if (!confirm(t(item.message ? 'reveal.confirmDelete.note' : 'reveal.confirmDelete.photo'))) return;
   const i = data.items.indexOf(item);
   try {
-    await api(`/api/reveal/${encodeURIComponent(token)}/items/${encodeURIComponent(item.id)}`, { method: 'DELETE' });
+    const res = await api(`/api/reveal/${encodeURIComponent(token)}/items/${encodeURIComponent(item.id)}`, { method: 'DELETE' });
     data.items.splice(i, 1);
+    takeSavedUntil(res);
     dirty = true;
     renderManage(data.items[Math.min(i, data.items.length - 1)]?.id);
-    toast('Deleted.');
+    toast(t('common.deleted'));
   } catch (err) {
     toast(err.message, { error: true });
   }
@@ -931,7 +1235,7 @@ $('optout-go').addEventListener('click', async () => {
   try {
     await api(`/api/reveal/${encodeURIComponent(token)}/optout`, { method: 'POST', json: { confirm: true } });
     dirty = false;
-    data = { ...data, ready: false, optOut: true, items: [], baseUrl: null };
+    data = { ...data, ready: false, optOut: true, items: [], baseUrl: null, savedUntil: null };
     $('manage').close();
     showClosed();
   } catch (err) {
@@ -956,21 +1260,23 @@ $('manage').addEventListener('close', () => {
 });
 
 // ---------- start ----------
-function intro(title, text, eventName = '') {
+// title and text are [key, vars] pairs for the catalogs.
+function intro([titleKey, titleVars], [textKey, textVars], eventName = '') {
   $('intro-event').textContent = eventName;
-  $('intro-title').textContent = title;
-  $('intro-text').textContent = text;
+  setText($('intro-title'), titleKey, titleVars);
+  setText($('intro-text'), textKey, textVars);
+  renderSaved();
 }
 
 function fillSummary(visible, what) {
   const notes = visible.filter((i) => i.message);
-  $('sr-summary').textContent = visible.length ? `${what} from your fans.` : '';
+  setText($('sr-summary'), visible.length ? `reveal.sr.${what}` : '');
   $('sr-list').replaceChildren(...notes.map((n) => el('li', { text: n.name ? `${n.message} (${n.name})` : n.message })));
 }
 
 // Never show a count: cosplayers at the same event compare screenshots, and a number turns the
 // reveal into a scoreboard. Say what kind of things arrived, not how many.
-const kinds = (photos, notes) => (photos && notes ? 'Photos and notes' : photos ? 'Photos' : 'Notes');
+const kinds = (photos, notes) => (photos && notes ? 'both' : photos ? 'photos' : 'notes');
 
 function freeScene(s) {
   if (!s) return;
@@ -986,17 +1292,17 @@ function showClosed() {
   fillSummary([], '');
   $('play').hidden = true;
   $('intro-manage').hidden = true;
-  intro('This page has been closed', 'Everything here was deleted at your request.', data.event.name);
+  intro(['reveal.closed.title'], ['reveal.closed.text'], data.event.name);
 }
 
 // Builds (or rebuilds, after Manage changes) the scene from the items that aren't hidden.
 async function showReady() {
   const name = data.cosplayer.name;
-  const visible = data.items.filter((i) => !i.hidden);
+  const visible = data.items.filter(shown);
   const what = kinds(visible.some((i) => i.thumbUrl), visible.some((i) => i.message));
   fillSummary(visible, what);
-  $('caption-sub').textContent = `${what} from your fans at ${data.event.name}`;
-  $('intro-manage').textContent = 'Manage your page';
+  setText($('caption-sub'), `reveal.caption.${what}`, { event: data.event.name });
+  setText($('intro-manage'), 'reveal.manage.open');
   $('intro-manage').hidden = false;
   resetExport();
 
@@ -1005,57 +1311,73 @@ async function showReady() {
     freeScene(scene);
     scene = null;
     $('play').hidden = true;
-    intro(`For ${name}`, data.items.length
-      ? 'Everything is hidden right now. Open Manage to show items again.'
-      : 'Nothing to show yet. Check back soon!', data.event.name);
+    intro(['reveal.for', { name }], [data.items.length ? 'reveal.allHidden' : 'reveal.nothingYet'], data.event.name);
     return;
   }
 
   const wasRunning = running;
   const button = $('play');
   if (!wasRunning) {
-    intro(`For ${name}`, `${what} from your fans at ${data.event.name}.`, data.event.name);
+    intro(['reveal.for', { name }], [`reveal.intro.${what}`, { event: data.event.name }], data.event.name);
     button.hidden = false;
     button.disabled = true;
   } else {
-    toast('Updating your mosaic…');
+    toast(t('reveal.toast.updating'));
   }
   try {
-    const next = await prepare(wasRunning ? () => {} : (p) => { button.textContent = `Preparing… ${Math.round(clamp(p, 0, 1) * 100)}%`; });
+    const next = await prepare(wasRunning ? () => {} : (p) => setText(button, 'reveal.preparingPct', { pct: Math.round(clamp(p, 0, 1) * 100) }));
     const old = scene;
     scene = next;
     computeLayout();
     freeScene(old);
-    $('export').hidden = scene.mode !== 'mosaic';
-    if (running) { play({ fromEnd: true }); toast('Updated.'); }
+    $('export').hidden = !canSave();
+    canvas.setAttribute('data-i18n-aria-label', `reveal.stage.${styleOf(data.event)}`);
+    canvas.setAttribute('aria-label', t(`reveal.stage.${styleOf(data.event)}`));
+    if (running) { play({ fromEnd: true }); toast(t('reveal.toast.updated')); }
     else {
-      button.textContent = reduceMotion.matches ? 'Show' : 'Play';
+      setText(button, reduceMotion.matches ? 'reveal.show' : 'reveal.play');
       button.disabled = false;
       button.focus();
     }
   } catch (err) {
     console.error(err);
-    if (wasRunning) toast("Couldn't update the mosaic. Try reloading.", { error: true });
-    else button.textContent = "Couldn't prepare the mosaic. Try reloading.";
+    if (wasRunning) toast(t('reveal.toast.updateFailed'), { error: true });
+    else setText(button, 'reveal.prepareFailed');
   }
 }
 
+// A language switch: notes are drawn on the canvas with the page's font stack, which follows the
+// language, so redraw them. Everything set with setText follows by itself.
+onLangChange(() => {
+  if (scene) computeLayout();
+  if ($('manage').open) renderManage();
+  else renderSaved();
+});
+
 try {
-  data = await api(`/api/reveal/${encodeURIComponent(token)}`);
+  data = await api(dataPath);
+  seed = data.seed ?? token;
+  await useEventLang(data.event.lang);
+  if (PREVIEW) {
+    // Nothing on this page may change the cosplayer's page: their controls stay hidden here.
+    document.body.classList.add('previewing');
+    setText($('preview-chip'), 'reveal.preview.chip', { name: data.cosplayer.name });
+    $('preview-chip').hidden = false;
+  }
 } catch (err) {
-  if (err instanceof TypeError) intro("Can't reach FanWall", 'Check your connection, then reload this page.');
-  else intro('This link is not valid', 'Ask the organizer for a fresh link.');
+  if (err instanceof TypeError) intro(['offline.title'], ['offline.text']);
+  else intro(['reveal.invalid.title'], ['reveal.invalid.text']);
 }
 
 if (data?.optOut) {
   showClosed();
 } else if (data && !data.ready) {
-  intro('Not quite ready yet', 'The organizer is still gathering photos and notes from your fans. Check back soon!', data.event.name);
+  intro(['reveal.notReady.title'], ['reveal.notReady.text'], data.event.name);
   // Closing the page is allowed before release: someone may not want fan photos at all.
-  $('intro-manage').textContent = "Don't want this? Close your page";
+  setText($('intro-manage'), 'reveal.manage.closeOnly');
   $('intro-manage').hidden = false;
 } else if (data) {
-  document.title = `For ${data.cosplayer.name} · FanWall`;
-  $('caption-title').textContent = `Thank you, ${data.cosplayer.name}`;
+  setTitle('reveal.docTitleFor', { name: data.cosplayer.name });
+  setText($('caption-title'), 'reveal.thankYou', { name: data.cosplayer.name });
   await showReady();
 }
