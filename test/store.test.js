@@ -7,7 +7,7 @@ import path from 'node:path';
 const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'fanwall-store-'));
 process.env.DATA_DIR = dir;
 const store = await import('../lib/store.js');
-const { db, mediaPath, purgeExpired, removeSubmission, removeCosplayer, removeEvent, findEventByToken, HARD_CAP_DAYS } = store;
+const { db, mediaPath, purgeExpired, removeSubmission, removeCosplayer, removeEvent, findEventByToken, HARD_CAP_DAYS, savedUntil } = store;
 
 const DAY = 86400e3;
 const T0 = Date.UTC(2026, 0, 1);
@@ -164,6 +164,42 @@ test('removeOrphanFiles never touches files it did not name', () => {
   fs.writeFileSync(mediaPath('notes.txt'), 'x');
   assert.equal(store.removeOrphanFiles(Date.now() + 10 * 3600e3), 0);
   assert.ok(exists('notes.txt'));
+});
+
+// ---------- "Saved until" on the reveal page ----------
+test('savedUntil: event close plus retentionDays when that comes first', () => {
+  const ev = { open: false, closedAt: T0 + 2 * DAY, retentionDays: 30 };
+  const subs = [{ createdAt: T0 + DAY }, { createdAt: T0 }, { createdAt: T0 + 3 * DAY }];
+  assert.equal(savedUntil(ev, subs), T0 + 32 * DAY);
+});
+
+test('savedUntil: the 90-day cap from the earliest upload wins when it comes first', () => {
+  // Closed late with long retention: day 80 + 30 is past the cap for the earliest upload (day 0 + 90).
+  const ev = { open: false, closedAt: T0 + 80 * DAY, retentionDays: 30 };
+  assert.equal(savedUntil(ev, [{ createdAt: T0 + 5 * DAY }, { createdAt: T0 }]), T0 + HARD_CAP_DAYS * DAY);
+});
+
+test('savedUntil: an open event shows only the 90-day cap', () => {
+  const ev = { open: true, closedAt: null, retentionDays: 30 };
+  assert.equal(savedUntil(ev, [{ createdAt: T0 + 10 * DAY }, { createdAt: T0 + 4 * DAY }]), T0 + 94 * DAY);
+});
+
+test('savedUntil: nothing to keep gives null', () => {
+  assert.equal(savedUntil({ open: false, closedAt: T0, retentionDays: 30 }, []), null);
+});
+
+test('savedUntil agrees with purgeExpired: kept at that moment, gone just after', () => {
+  for (const extra of [{ open: true, closedAt: null }, { open: false, closedAt: T0 + 20 * DAY, retentionDays: 7 }]) {
+    reset();
+    addEvent('e', extra);
+    addSub('nnnn', 'e', { createdAt: T0 + DAY, withFile: false });
+    addSub('oooo', 'e', { createdAt: T0 + 2 * DAY, withFile: false });
+    const until = savedUntil(db.events.e, Object.values(db.submissions));
+    assert.equal(purgeExpired(until), 0, 'still kept at savedUntil');
+    assert.ok(db.submissions.nnnn);
+    assert.ok(purgeExpired(until + 1) >= 1, 'the first one goes right after');
+    assert.equal(db.submissions.nnnn, undefined);
+  }
 });
 
 test('getOwn ignores inherited keys', () => {

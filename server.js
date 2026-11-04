@@ -8,12 +8,15 @@ import multer from 'multer';
 import QRCode from 'qrcode';
 import {
   db, save, newId, sha256, UPLOAD_DIR, MEDIA_NAME, mediaPath, getOwn, safeEqual, removeSubmission, removeCosplayer, optOutCosplayer,
-  purgeExpired, removeOrphanFiles, findEventByToken, findCosplayerByToken, HARD_CAP_DAYS,
+  purgeExpired, removeOrphanFiles, findEventByToken, findCosplayerByToken, HARD_CAP_DAYS, savedUntil,
 } from './lib/store.js';
-import { consentCopy, CONSENT_VERSION } from './lib/consent.js';
+import { consentCopies, CONSENT_VERSION } from './lib/consent.js';
+import { planBundle } from './lib/bundle.js';
 import { streamZip } from './lib/zip.js';
-import { savePhoto, saveBase, removePhoto, removeBase, renderEdited, ImageDecodeError } from './lib/images.js';
+import { savePhoto, saveBase, removePhoto, removeBase, renderEdited, renderThumb, ImageDecodeError } from './lib/images.js';
 import { normalizeEdit, EditError } from './public/js/edit.js';
+import { isLang } from './public/js/i18n-core.js';
+import { isStyle, styleOf, styleFor, DEFAULT_STYLE } from './public/js/styles.js';
 
 const PORT = Number(process.env.PORT) || 3000;
 const PUBLIC_URL = (process.env.PUBLIC_URL || '').replace(/\/+$/, '');
@@ -86,7 +89,7 @@ function rateLimit({ max, windowMs }) {
     if (!h || h.reset <= now) hits.set(key, (h = { count: 0, reset: now + windowMs }));
     if (++h.count > max) {
       res.set('Retry-After', String(Math.ceil((h.reset - now) / 1000)));
-      return res.status(429).json({ error: 'Too many requests. Please try again in a few minutes.' });
+      return res.status(429).json({ error: 'rate_limited' });
     }
     next();
   };
@@ -111,34 +114,51 @@ const normalizeCode = (code) => (typeof code === 'string' ? code.toUpperCase().r
 const isOn = (v) => v === true || v === '1' || v === 'true' || v === 'on';
 const chars = (s) => [...s].length;
 
+// Errors go out as a code plus details ({ error: 'too_long', field: 'message', max: 280 }), never as
+// a sentence: the pages put them into words in the visitor's language (public/locales).
 class HttpError extends Error {
-  constructor(status, message) { super(message); this.status = status; }
+  constructor(status, code, vars = {}) { super(code); this.status = status; this.code = code; this.vars = vars; }
 }
 
 // Optional trimmed string field with a length cap. Returns undefined when absent.
-function textField(value, label, { max, required = false } = {}) {
+// field names the input for the error (field.<name> in the catalogs).
+function textField(value, field, { max, required = false } = {}) {
   if (value === undefined || value === null) {
-    if (required) throw new HttpError(400, `${label} is required.`);
+    if (required) throw new HttpError(400, 'required', { field });
     return undefined;
   }
-  if (typeof value !== 'string') throw new HttpError(400, `${label} must be text.`);
+  if (typeof value !== 'string') throw new HttpError(400, 'not_text', { field });
   const s = value.trim();
-  if (required && !s) throw new HttpError(400, `${label} is required.`);
-  if (chars(s) > max) throw new HttpError(400, `${label} can be up to ${max} characters.`);
+  if (required && !s) throw new HttpError(400, 'required', { field });
+  if (chars(s) > max) throw new HttpError(400, 'too_long', { field, max });
   return s;
 }
 
 function retentionField(value) {
   if (value === undefined || value === null || value === '') return undefined;
   const n = Number(value);
-  if (!Number.isInteger(n) || n < 1 || n > HARD_CAP_DAYS) {
-    throw new HttpError(400, `Retention must be a whole number of days from 1 to ${HARD_CAP_DAYS}.`);
-  }
+  if (!Number.isInteger(n) || n < 1 || n > HARD_CAP_DAYS) throw new HttpError(400, 'bad_retention', { max: HARD_CAP_DAYS });
   return n;
 }
 
-function boolField(value, label) {
-  if (typeof value !== 'boolean') throw new HttpError(400, `${label} must be true or false.`);
+// Mistakes only a hand-made request makes share one code; field says which part was wrong.
+function boolField(value, field) {
+  if (typeof value !== 'boolean') throw new HttpError(400, 'bad_request', { field });
+  return value;
+}
+
+// The event's default language for its pages; null leaves it to each visitor's browser.
+function langField(value) {
+  if (value === undefined) return undefined;
+  if (value === null || value === '') return null;
+  if (!isLang(value)) throw new HttpError(400, 'bad_request', { field: 'lang' });
+  return value;
+}
+
+// The event's reveal style (public/js/styles.js). One per event, never per cosplayer.
+function styleField(value) {
+  if (value === undefined) return undefined;
+  if (!isStyle(value)) throw new HttpError(400, 'bad_request', { field: 'style' });
   return value;
 }
 
@@ -158,13 +178,13 @@ const upload = multer({
   storage: multer.memoryStorage(),
   limits: { fileSize: MAX_UPLOAD_BYTES, files: 1, fields: 10, fieldSize: 4096, parts: 12 },
   fileFilter: (req, file, cb) =>
-    IMAGE_MIME.test(file.mimetype) ? cb(null, true) : cb(new HttpError(415, 'Please choose an image file.')),
+    IMAGE_MIME.test(file.mimetype) ? cb(null, true) : cb(new HttpError(415, 'not_image')),
 });
 const imageUpload = (field) => (req, res, next) =>
   upload.single(field)(req, res, (err) => {
     if (err instanceof multer.MulterError) {
-      const tooBig = err.code === 'LIMIT_FILE_SIZE';
-      return next(new HttpError(tooBig ? 413 : 400, tooBig ? 'That image is too large (max 12 MB).' : 'Invalid upload.'));
+      if (err.code === 'LIMIT_FILE_SIZE') return next(new HttpError(413, 'image_too_large', { maxMb: MAX_UPLOAD_BYTES / 1024 / 1024 }));
+      return next(new HttpError(400, 'bad_upload'));
     }
     next(err);
   });
@@ -173,7 +193,7 @@ async function encodeOr400(fn, buffer) {
   try {
     return await fn(buffer);
   } catch (err) {
-    if (err instanceof ImageDecodeError) throw new HttpError(400, "We couldn't read that image. Try a JPEG or PNG.");
+    if (err instanceof ImageDecodeError) throw new HttpError(400, 'image_unreadable');
     throw err;
   }
 }
@@ -186,13 +206,14 @@ app.get('/api/config', (req, res) => res.json({ needsKey: Boolean(CREATE_KEY) })
 
 app.post('/api/events', createLimit, (req, res) => {
   const body = req.body ?? {};
-  if (CREATE_KEY && !safeEqual(body.key, CREATE_KEY)) throw new HttpError(403, 'That create key is not right.');
-  const name = textField(body.name, 'Event name', { max: MAX_TITLE, required: true });
+  if (CREATE_KEY && !safeEqual(body.key, CREATE_KEY)) throw new HttpError(403, 'bad_create_key');
+  const name = textField(body.name, 'eventName', { max: MAX_TITLE, required: true });
   const retentionDays = retentionField(body.retentionDays) ?? 30;
   const id = newId();
   const organizerToken = newId(24);
   db.events[id] = {
-    id, name, organizerToken, baseImage: null, open: true, closedAt: null, retentionDays, createdAt: Date.now(),
+    id, name, organizerToken, baseImage: null, open: true, closedAt: null, retentionDays, lang: null, style: DEFAULT_STYLE,
+    createdAt: Date.now(),
   };
   save();
   res.status(201).json({ id, adminPath: `/admin/${organizerToken}` });
@@ -201,12 +222,12 @@ app.post('/api/events', createLimit, (req, res) => {
 // ---------- API: fans ----------
 app.get('/api/fan/:eid/:cid', (req, res) => {
   const t = loadFanTarget(req.params.eid, req.params.cid);
-  if (!t) throw new HttpError(404, 'This link is not valid.');
+  if (!t) throw new HttpError(404, 'link_invalid');
   res.json({
-    event: { name: t.ev.name },
+    event: { name: t.ev.name, lang: t.ev.lang ?? null },
     cosplayer: { name: t.cos.name, character: t.cos.character ?? '' },
     open: t.open,
-    consent: consentCopy({ cosplayerName: t.cos.name, retentionDays: t.ev.retentionDays ?? 30 }),
+    consent: consentCopies({ cosplayerName: t.cos.name, retentionDays: t.ev.retentionDays ?? 30 }), // by language
   });
 });
 
@@ -218,28 +239,30 @@ app.post(
   // Check the target before buffering the upload, so closed links don't cost us 12 MB.
   (req, res, next) => {
     const t = loadFanTarget(req.params.eid, req.params.cid);
-    if (!t) throw new HttpError(404, 'This link is not valid.');
-    if (!t.open) throw new HttpError(403, 'Submissions are closed for this cosplayer.');
+    if (!t) throw new HttpError(404, 'link_invalid');
+    if (!t.open) throw new HttpError(403, 'closed');
     let count = 0;
     for (const s of Object.values(db.submissions)) if (s.cosplayerId === t.cos.id) count++;
-    if (count >= MAX_PER_COSPLAYER) throw new HttpError(409, 'This inbox is full. Thank you for trying!');
+    if (count >= MAX_PER_COSPLAYER) throw new HttpError(409, 'inbox_full');
     res.locals.target = t;
     next();
   },
   imageUpload('photo'),
   async (req, res) => {
     const body = req.body ?? {};
-    if (body.consent !== '1') throw new HttpError(400, 'Please tick the consent box to send.');
-    const message = textField(body.message, 'Message', { max: MAX_MESSAGE }) ?? '';
-    const name = textField(body.name, 'Name', { max: MAX_NAME }) ?? '';
-    if (!req.file && !message) throw new HttpError(400, 'Add a photo or a message.');
+    if (body.consent !== '1') throw new HttpError(400, 'consent_required');
+    // The language of the consent text the fan agreed to, kept with the consent version.
+    if (!isLang(body.consentLang)) throw new HttpError(400, 'bad_request', { field: 'consentLang' });
+    const message = textField(body.message, 'message', { max: MAX_MESSAGE }) ?? '';
+    const name = textField(body.name, 'name', { max: MAX_NAME }) ?? '';
+    if (!req.file && !message) throw new HttpError(400, 'empty_submission');
 
     // The fan page sends its own delete code, so a retry after a lost response carries the same
     // code and we can answer it without storing a duplicate. Only the hash is ever kept.
     let deleteCode = newDeleteCode();
     if (body.code !== undefined) {
       const c = normalizeCode(body.code);
-      if (!CODE_RE.test(c)) throw new HttpError(400, 'Invalid delete code.');
+      if (!CODE_RE.test(c)) throw new HttpError(400, 'bad_request', { field: 'code' });
       deleteCode = formatCode(c);
     }
     const codeHash = sha256(normalizeCode(deleteCode));
@@ -248,7 +271,7 @@ app.post(
     if (dup) return res.status(201).json({ id: dup.id, deleteCode });
     if (inFlight.has(codeHash)) {
       res.set('Retry-After', '5');
-      throw new HttpError(503, 'Still sending your earlier attempt.');
+      throw new HttpError(503, 'still_sending');
     }
 
     inFlight.add(codeHash);
@@ -259,7 +282,7 @@ app.post(
       const t = loadFanTarget(req.params.eid, req.params.cid);
       if (!t?.open) {
         await removePhoto(file);
-        throw new HttpError(403, 'Submissions are closed for this cosplayer.');
+        throw new HttpError(403, 'closed');
       }
 
       const now = Date.now();
@@ -272,7 +295,7 @@ app.post(
         message,
         name,
         credit: Boolean(name) && isOn(body.credit),
-        consent: { v: CONSENT_VERSION, at: now },
+        consent: { v: CONSENT_VERSION, lang: body.consentLang, at: now },
         status: 'pending',
         hidden: false,
         codeHash,
@@ -298,7 +321,7 @@ app.post('/api/fan/delete', deleteLimit, (req, res) => {
     else if (safeEqual(getOwn(db.submissions, id)?.codeHash, hash)) s = db.submissions[id];
   }
   // Same answer for unknown id and wrong code, so ids can't be probed.
-  if (!s) throw new HttpError(404, 'No submission matches that code.');
+  if (!s) throw new HttpError(404, 'code_not_found');
   removeSubmission(s.id);
   save();
   res.json({ ok: true });
@@ -310,29 +333,40 @@ app.post('/api/fan/delete', deleteLimit, (req, res) => {
 function revealTarget(token) {
   const c = findCosplayerByToken(token);
   const ev = c && getOwn(db.events, c.eventId);
-  if (!c || !ev) throw new HttpError(404, 'This link is not valid.');
+  if (!c || !ev) throw new HttpError(404, 'link_invalid');
   return { c, ev, ready: Boolean(c.released) && !c.optOut };
 }
 // The cosplayer can only act on what they can see: their own approved items, after release.
 function revealReady(token) {
   const t = revealTarget(token);
-  if (!t.ready) throw new HttpError(403, t.c.optOut ? 'This page has been closed.' : 'This page is not open yet.');
+  if (!t.ready) throw new HttpError(403, t.c.optOut ? 'page_closed' : 'page_not_open');
   return t;
 }
 function revealItem(token, id) {
-  const { c } = revealReady(token);
+  const t = revealReady(token);
   const s = getOwn(db.submissions, id);
-  if (!s || s.cosplayerId !== c.id || s.status !== 'approved') throw new HttpError(404, 'No such item.');
-  return s;
+  if (!s || s.cosplayerId !== t.c.id || s.status !== 'approved') throw new HttpError(404, 'item_not_found');
+  return { ...t, s };
 }
 const approvedFor = (c) => Object.values(db.submissions)
   .filter((s) => s.cosplayerId === c.id && s.status === 'approved')
   .sort((a, b) => a.createdAt - b.createdAt);
+// When the first item the cosplayer hasn't hidden will be deleted (see savedUntil in lib/store.js).
+const savedUntilFor = (c, ev) => savedUntil(ev, approvedFor(c).filter((s) => !s.hidden));
 
 app.get('/api/reveal/:token', (req, res) => {
   const { c, ev, ready } = revealTarget(req.params.token);
-  const out = { ready, optOut: Boolean(c.optOut), event: { name: ev.name }, cosplayer: { name: c.name, character: c.character ?? '' } };
-  if (!ready) return res.json({ ...out, baseUrl: null, items: [] });
+  res.json(revealView(c, ev, ready));
+});
+
+// What a reveal page gets. event.style is this cosplayer's style (their own, or the event's default).
+// The organizer's preview gets the same view, as if released.
+function revealView(c, ev, ready) {
+  const out = {
+    ready, optOut: Boolean(c.optOut), event: { name: ev.name, lang: ev.lang ?? null, style: styleFor(ev, c) },
+    cosplayer: { name: c.name, character: c.character ?? '' },
+  };
+  if (!ready) return { ...out, baseUrl: null, items: [], savedUntil: null };
   const items = approvedFor(c).map((s) => ({
       id: s.id,
       thumbUrl: s.file ? mediaUrl(`${s.file}_t.jpg`) : null,
@@ -340,31 +374,40 @@ app.get('/api/reveal/:token', (req, res) => {
       message: s.message,
       name: s.credit ? s.name : '',
       hidden: Boolean(s.hidden),
+      favorite: Boolean(s.favorite),
       edit: s.edit ?? null,
     }));
   // The cosplayer's own image when the organizer set one, so no two reveals have to show the same picture.
   const baseImage = c.baseImage || ev.baseImage;
-  res.json({ ...out, baseUrl: baseImage ? mediaUrl(`base_${baseImage}.jpg`) : null, items });
-});
+  return { ...out, baseUrl: baseImage ? mediaUrl(`base_${baseImage}.jpg`) : null, items, savedUntil: savedUntilFor(c, ev) };
+}
 
-// Hidden items stay saved but leave the animation, the export, and the ZIP.
+// { hidden } and/or { favorite }. Hidden items stay saved but leave the animation, the export, and
+// the ZIP. Favorites are the cosplayer's own stars: private to them (the organizer never sees them),
+// independent of hiding, and deleted with the item. Hiding can move "Saved until", so the new date
+// comes back too.
 app.post('/api/reveal/:token/items/:id', (req, res) => {
-  const s = revealItem(req.params.token, req.params.id);
-  s.hidden = boolField(req.body?.hidden, 'hidden');
+  const { s, c, ev } = revealItem(req.params.token, req.params.id);
+  const body = req.body ?? {};
+  if (body.hidden === undefined && body.favorite === undefined) throw new HttpError(400, 'bad_request', { field: 'hidden' });
+  const hidden = body.hidden === undefined ? undefined : boolField(body.hidden, 'hidden');
+  const favorite = body.favorite === undefined ? undefined : boolField(body.favorite, 'favorite');
+  if (hidden !== undefined) s.hidden = hidden;
+  if (favorite !== undefined) s.favorite = favorite;
   save();
-  res.json({ id: s.id, hidden: s.hidden });
+  res.json({ id: s.id, hidden: Boolean(s.hidden), favorite: Boolean(s.favorite), savedUntil: savedUntilFor(c, ev) });
 });
 
 // Non-destructive: only the edit's description is stored; the fan's file stays as it was.
 // { edit: null } goes back to the original.
 app.post('/api/reveal/:token/items/:id/edit', (req, res) => {
-  const s = revealItem(req.params.token, req.params.id);
-  if (!s.file) throw new HttpError(400, 'Only photos can be edited.');
-  if (req.body?.edit === undefined) throw new HttpError(400, 'Send {"edit": ...}, or {"edit": null} to undo.');
+  const { s } = revealItem(req.params.token, req.params.id);
+  if (!s.file) throw new HttpError(400, 'not_a_photo');
+  if (req.body?.edit === undefined) throw new HttpError(400, 'bad_request', { field: 'edit' }); // {"edit": null} undoes
   try {
     s.edit = normalizeEdit(req.body.edit);
   } catch (err) {
-    if (err instanceof EditError) throw new HttpError(400, err.message);
+    if (err instanceof EditError) throw new HttpError(400, 'bad_request', { field: 'edit' });
     throw err;
   }
   save();
@@ -372,17 +415,17 @@ app.post('/api/reveal/:token/items/:id/edit', (req, res) => {
 });
 
 app.delete('/api/reveal/:token/items/:id', (req, res) => {
-  const s = revealItem(req.params.token, req.params.id);
+  const { s, c, ev } = revealItem(req.params.token, req.params.id);
   removeSubmission(s.id);
   save();
-  res.json({ ok: true });
+  res.json({ ok: true, savedUntil: savedUntilFor(c, ev) });
 });
 
 // Allowed before release too: a cosplayer may want the page closed without seeing anything.
 // `confirm: true` must arrive as JSON, which a cross-site form can't send.
 app.post('/api/reveal/:token/optout', (req, res) => {
   const { c } = revealTarget(req.params.token);
-  if (req.body?.confirm !== true) throw new HttpError(400, 'Send {"confirm": true} to remove everything.');
+  if (req.body?.confirm !== true) throw new HttpError(400, 'bad_request', { field: 'confirm' }); // {"confirm": true}
   optOutCosplayer(c.id);
   save();
   res.json({ ok: true });
@@ -390,30 +433,50 @@ app.post('/api/reveal/:token/optout', (req, res) => {
 
 const asciiSlug = (s) => s.normalize('NFKD').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 40);
 
-// Every visible photo at full size plus messages.txt. Names appear only when the fan asked for credit.
-// Edited photos come out edited, with the unedited copy under unedited/ for editing elsewhere.
+// "Download all" (see lib/bundle.js and BUNDLE-FORMAT.md): a gallery page that works offline,
+// manifest.json, messages.txt, every visible photo at full size, and grid-sized thumbnails.
+// Names appear only when the fan asked for credit. Edited photos come out edited, with the
+// unedited copy under unedited/ for editing elsewhere. The mosaic image isn't included: it's drawn
+// in the browser, and "Save image" on the reveal page saves it.
+// ?lang= is the page's language for the bundle's own words (the fans' notes stay as written);
+// ?tz= is the browser's getTimezoneOffset(), so the event's date is the cosplayer's calendar day.
+// ?only=favorites keeps just the items the cosplayer starred.
 app.get('/api/reveal/:token/download.zip', downloadLimit, async (req, res) => {
   const { c, ev } = revealReady(req.params.token);
-  const entries = [];
-  const lines = [`Photos and notes from your fans at ${ev.name}`, ''];
-  let n = 0;
+  const lang = isLang(req.query.lang) ? req.query.lang : ev.lang ?? 'en';
+  const tz = Number(req.query.tz);
+  const favoritesOnly = req.query.only === 'favorites';
+  const kept = [];
   for (const s of approvedFor(c)) {
-    if (s.hidden) continue;
-    let photo = '';
-    if (s.file && fs.existsSync(mediaPath(`${s.file}.jpg`))) {
-      photo = `photo-${String(++n).padStart(4, '0')}.jpg`;
-      if (s.edit) {
-        const { file, edit } = s; // rendered when written, so only one edited photo is in memory at a time
-        entries.push({ name: `photos/${photo}`, data: () => renderEdited(file, edit) });
-        entries.push({ name: `unedited/${photo}`, path: mediaPath(`${s.file}.jpg`) });
-      } else {
-        entries.push({ name: `photos/${photo}`, path: mediaPath(`${s.file}.jpg`) });
-      }
-    }
-    const credit = s.credit && s.name ? ` (from ${s.name})` : '';
-    if (s.message || credit) lines.push(`${photo ? `[${photo}] ` : ''}${s.message || '(photo)'}${credit}`, '');
+    if (s.hidden || (favoritesOnly && !s.favorite)) continue;
+    const photo = Boolean(s.file) && fs.existsSync(mediaPath(`${s.file}.jpg`));
+    if (photo || s.message) kept.push({ s, photo });
   }
-  entries.unshift({ name: 'messages.txt', data: Buffer.from(lines.join('\r\n'), 'utf8') }); // CRLF for Notepad
+  const plan = planBundle({
+    event: ev, cosplayer: c, lang, tz: Number.isInteger(tz) && Math.abs(tz) <= 840 ? tz : 0, revealStyle: styleFor(ev, c),
+    fallbackDate: ev.closedAt ?? ev.createdAt,
+    items: kept.map(({ s, photo }) => ({
+      message: s.message, credit: s.credit && s.name ? s.name : '', photo, edited: photo && Boolean(s.edit),
+      favorite: Boolean(s.favorite), createdAt: s.createdAt,
+    })),
+  });
+  const entries = [
+    { name: 'index.html', data: Buffer.from(plan.html, 'utf8') },
+    { name: 'manifest.json', data: Buffer.from(JSON.stringify(plan.manifest, null, 2), 'utf8') },
+    { name: 'messages.txt', data: Buffer.from(plan.messages, 'utf8') },
+  ];
+  kept.forEach(({ s }, i) => {
+    const photo = plan.photos[i];
+    if (!photo) return;
+    const { file, edit } = s; // rendered when written, so only one generated image is in memory at a time
+    if (edit) {
+      entries.push({ name: `photos/${photo}`, data: () => renderEdited(file, edit) });
+      entries.push({ name: `unedited/${photo}`, path: mediaPath(`${file}.jpg`) });
+    } else {
+      entries.push({ name: `photos/${photo}`, path: mediaPath(`${file}.jpg`) });
+    }
+    entries.push({ name: `thumbs/${photo}`, data: () => renderThumb(file, edit) });
+  });
   res.set({
     'Content-Type': 'application/zip',
     'Content-Disposition': `attachment; filename="fanwall-${asciiSlug(c.name) || 'photos'}.zip"`,
@@ -430,21 +493,22 @@ app.get('/api/reveal/:token/download.zip', downloadLimit, async (req, res) => {
 const admin = express.Router();
 app.use('/api/admin/:token', (req, res, next) => {
   const ev = findEventByToken(req.params.token);
-  if (!ev) throw new HttpError(404, 'This organizer link is not valid.');
+  if (!ev) throw new HttpError(404, 'admin_link_invalid');
   res.locals.ev = ev;
   next();
 }, admin);
 
 function ownCosplayer(res, cid) {
   const c = getOwn(db.cosplayers, cid);
-  if (!c || c.eventId !== res.locals.ev.id) throw new HttpError(404, 'No such cosplayer.');
+  if (!c || c.eventId !== res.locals.ev.id) throw new HttpError(404, 'cosplayer_not_found');
   return c;
 }
 
 function eventView(ev) {
   return {
     id: ev.id, name: ev.name, open: ev.open, closedAt: ev.closedAt, retentionDays: ev.retentionDays,
-    createdAt: ev.createdAt, baseUrl: ev.baseImage ? mediaUrl(`base_${ev.baseImage}.jpg`) : null,
+    lang: ev.lang ?? null, style: styleOf(ev), createdAt: ev.createdAt,
+    baseUrl: ev.baseImage ? mediaUrl(`base_${ev.baseImage}.jpg`) : null,
   };
 }
 
@@ -471,6 +535,7 @@ admin.get('/', (req, res) => {
       id: c.id, name: c.name, character: c.character, released: c.released, optOut: c.optOut,
       fanPath: fanPath(c), revealPath: `/r/${c.revealToken}`, counts: counts.get(c.id),
       baseUrl: c.baseImage ? mediaUrl(`base_${c.baseImage}.jpg`) : null,
+      style: isStyle(c.style) ? c.style : null, // their own; null means the event's default
     })),
     submissions,
   });
@@ -479,11 +544,15 @@ admin.get('/', (req, res) => {
 admin.patch('/event', (req, res) => {
   const ev = res.locals.ev;
   const body = req.body ?? {};
-  const name = textField(body.name, 'Event name', { max: MAX_TITLE, required: body.name !== undefined });
+  const name = textField(body.name, 'eventName', { max: MAX_TITLE, required: body.name !== undefined });
   const retentionDays = retentionField(body.retentionDays);
   const open = body.open === undefined ? undefined : boolField(body.open, 'open');
+  const lang = langField(body.lang);
+  const style = styleField(body.style);
   if (name !== undefined) ev.name = name;
   if (retentionDays !== undefined) ev.retentionDays = retentionDays;
+  if (lang !== undefined) ev.lang = lang;
+  if (style !== undefined) ev.style = style;
   if (open === false && ev.open) { ev.open = false; ev.closedAt = Date.now(); }
   if (open === true && !ev.open) { ev.open = true; ev.closedAt = null; }
   save();
@@ -491,7 +560,7 @@ admin.patch('/event', (req, res) => {
 });
 
 admin.post('/base', imageUpload('image'), async (req, res) => {
-  if (!req.file) throw new HttpError(400, 'Choose an image to upload.');
+  if (!req.file) throw new HttpError(400, 'image_missing');
   const ev = res.locals.ev;
   const id = await encodeOr400(saveBase, req.file.buffer);
   const old = ev.baseImage;
@@ -504,18 +573,35 @@ admin.post('/base', imageUpload('image'), async (req, res) => {
 admin.post('/cosplayers', (req, res) => {
   const ev = res.locals.ev;
   const body = req.body ?? {};
-  const name = textField(body.name, 'Cosplayer name', { max: 60, required: true });
-  const character = textField(body.character, 'Character', { max: 60 }) ?? '';
+  const name = textField(body.name, 'cosplayerName', { max: 60, required: true });
+  const character = textField(body.character, 'character', { max: 60 }) ?? '';
   let count = 0;
   for (const c of Object.values(db.cosplayers)) if (c.eventId === ev.id) count++;
-  if (count >= MAX_COSPLAYERS) throw new HttpError(409, `An event can have up to ${MAX_COSPLAYERS} cosplayers.`);
+  if (count >= MAX_COSPLAYERS) throw new HttpError(409, 'too_many_cosplayers', { max: MAX_COSPLAYERS });
   const id = newId();
   db.cosplayers[id] = {
     id, eventId: ev.id, name, character, revealToken: newId(24), released: false, optOut: false,
-    baseImage: null, baseAt: null, createdAt: Date.now(),
+    baseImage: null, baseAt: null, style: null, createdAt: Date.now(),
   };
   save();
   res.status(201).json({ id });
+});
+
+// A cosplayer's own reveal style; { style: null } goes back to the event's default.
+admin.patch('/cosplayers/:cid', (req, res) => {
+  const c = ownCosplayer(res, req.params.cid);
+  const style = req.body?.style === null ? null : styleField(req.body?.style);
+  if (style === undefined) throw new HttpError(400, 'bad_request', { field: 'style' });
+  c.style = style;
+  save();
+  res.json({ style: c.style });
+});
+
+// The organizer's preview of a cosplayer's reveal page: exactly what they'd see if released now,
+// approved items only. View-only: every change still needs the cosplayer's own link, after release.
+admin.get('/cosplayers/:cid/preview', (req, res) => {
+  const c = ownCosplayer(res, req.params.cid);
+  res.json({ ...revealView(c, res.locals.ev, !c.optOut), preview: true, seed: c.revealToken });
 });
 
 admin.delete('/cosplayers/:cid', (req, res) => {
@@ -528,16 +614,16 @@ admin.delete('/cosplayers/:cid', (req, res) => {
 // A cosplayer's own mosaic image (e.g. a photo of them in costume). Checked before the upload is read.
 admin.post('/cosplayers/:cid/base', (req, res, next) => {
   const c = ownCosplayer(res, req.params.cid);
-  if (c.optOut) throw new HttpError(409, `${c.name} closed their page.`);
+  if (c.optOut) throw new HttpError(409, 'cosplayer_closed', { name: c.name });
   next();
 },
   imageUpload('image'), async (req, res) => {
-    if (!req.file) throw new HttpError(400, 'Choose an image to upload.');
+    if (!req.file) throw new HttpError(400, 'image_missing');
     const id = await encodeOr400(saveBase, req.file.buffer);
     const c = getOwn(db.cosplayers, req.params.cid);
     if (!c || c.eventId !== res.locals.ev.id || c.optOut) { // removed or opted out while the image was encoding
       await removeBase(id);
-      throw c?.optOut ? new HttpError(409, `${c.name} closed their page.`) : new HttpError(404, 'No such cosplayer.');
+      throw c?.optOut ? new HttpError(409, 'cosplayer_closed', { name: c.name }) : new HttpError(404, 'cosplayer_not_found');
     }
     const old = c.baseImage;
     c.baseImage = id;
@@ -573,7 +659,7 @@ admin.post('/release-all', (req, res) => {
 admin.post('/cosplayers/:cid/release', (req, res) => {
   const c = ownCosplayer(res, req.params.cid);
   const released = boolField(req.body?.released, 'released');
-  if (released && c.optOut) throw new HttpError(409, `${c.name} asked to close their page, so it can't be released.`);
+  if (released && c.optOut) throw new HttpError(409, 'cosplayer_opted_out', { name: c.name });
   c.released = released;
   save();
   res.json({ released: c.released });
@@ -586,7 +672,7 @@ admin.get('/qr/:cid.svg', async (req, res) => {
 });
 
 function statusField(value) {
-  if (!STATUSES.has(value)) throw new HttpError(400, 'Status must be pending, approved, or rejected.');
+  if (!STATUSES.has(value)) throw new HttpError(400, 'bad_request', { field: 'status' }); // pending, approved, or rejected
   return value;
 }
 
@@ -594,7 +680,7 @@ admin.patch('/submissions/:id', (req, res) => {
   const status = statusField(req.body?.status);
   const id = req.params.id;
   const s = getOwn(db.submissions, id);
-  if (!s || s.eventId !== res.locals.ev.id) throw new HttpError(404, 'No such submission.');
+  if (!s || s.eventId !== res.locals.ev.id) throw new HttpError(404, 'item_not_found');
   s.status = status;
   save();
   res.json({ id, status });
@@ -603,7 +689,7 @@ admin.patch('/submissions/:id', (req, res) => {
 admin.post('/submissions/bulk', (req, res) => {
   const status = statusField(req.body?.status);
   const ids = req.body?.ids;
-  if (!Array.isArray(ids) || ids.length > BULK_MAX) throw new HttpError(400, `ids must be a list (up to ${BULK_MAX}).`);
+  if (!Array.isArray(ids) || ids.length > BULK_MAX) throw new HttpError(400, 'bad_request', { field: 'ids', max: BULK_MAX });
   const updated = [];
   for (const id of ids) {
     const s = getOwn(db.submissions, id);
@@ -613,7 +699,7 @@ admin.post('/submissions/bulk', (req, res) => {
   res.json({ updated });
 });
 
-app.use('/api', (req, res) => res.status(404).json({ error: 'Not found.' }));
+app.use('/api', (req, res) => res.status(404).json({ error: 'not_found' }));
 
 // ---------- media ----------
 app.get('/media/:file', (req, res) => {
@@ -638,14 +724,18 @@ const page = (file) => (req, res) => {
   res.set('Cache-Control', 'no-store');
   res.sendFile(file, { root: PUBLIC_DIR });
 };
-const requireOrganizer = (req, res, next) =>
-  findEventByToken(req.params.token) ? next() : res.status(404).type('text/plain').send('This organizer link is not valid.');
+// A bad organizer link still gets its page, with a 404, so the page can say so in the visitor's language.
+const requireOrganizer = (req, res, next) => {
+  if (!findEventByToken(req.params.token)) res.status(404);
+  next();
+};
 
 app.get('/', page('index.html'));
 app.get('/e/:eid/c/:cid', page('fan.html')); // the page itself explains bad or closed links
 app.get('/r/:token', page('reveal.html')); // the page shows "not ready" / "not valid" itself
 app.get('/admin/:token', requireOrganizer, page('admin.html'));
 app.get('/admin/:token/print/:cid', requireOrganizer, page('print.html'));
+app.get('/admin/:token/preview/:cid', requireOrganizer, page('reveal.html')); // reveal.js sees the path
 app.use(express.static(PUBLIC_DIR, { index: false }));
 
 // ---------- errors ----------
@@ -654,7 +744,9 @@ app.use((err, req, res, next) => {
   const status = err.status ?? err.statusCode ?? 500;
   if (status >= 500) console.error('[error]', err.message);
   if (res.headersSent) return next(err);
-  res.status(status).json({ error: status >= 500 ? 'Something went wrong.' : err.message });
+  // Anything else (a malformed JSON body, say) gets a generic code; parser messages never go out.
+  if (err instanceof HttpError) return res.status(status).json({ error: err.code, ...err.vars });
+  res.status(status).json({ error: status >= 500 ? 'server_error' : 'bad_request' });
 });
 
 // ---------- retention ----------

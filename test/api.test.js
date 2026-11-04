@@ -39,9 +39,10 @@ async function call(p, { method = 'GET', json, form, ip } = {}) {
 let ipCounter = 0;
 const freshIp = () => `10.0.${Math.floor(++ipCounter / 250)}.${ipCounter % 250 + 1}`;
 
+// The fan page always says which language the consent was shown in; pass consentLang: null to leave it out.
 async function submit(eid, cid, fields = {}, photo, ip = freshIp()) {
   const form = new FormData();
-  for (const [k, v] of Object.entries(fields)) form.append(k, v);
+  for (const [k, v] of Object.entries({ consentLang: 'en', ...fields })) if (v !== null) form.append(k, v);
   if (photo) form.append('photo', new Blob([photo], { type: 'image/jpeg' }), 'p.jpg');
   return call(`/api/fan/${eid}/${cid}/submit`, { method: 'POST', form, ip });
 }
@@ -326,7 +327,7 @@ test('reveal: nothing before release, then approved items only, names only when 
   assert.equal(after.body.items.find((i) => i.id === ids.approvedAnon).name, '');
   assert.equal(JSON.stringify(after.body).includes('Secret Name'), false);
   for (const i of after.body.items) {
-    assert.deepEqual(Object.keys(i).sort(), ['edit', 'fullUrl', 'hidden', 'id', 'message', 'name', 'thumbUrl']);
+    assert.deepEqual(Object.keys(i).sort(), ['edit', 'favorite', 'fullUrl', 'hidden', 'id', 'message', 'name', 'thumbUrl']);
   }
   assert.equal(after.headers.get('cache-control'), 'no-store');
 
@@ -475,7 +476,7 @@ test('hide, unhide, and delete; hidden items stay out of the zip', async () => {
   await call(`${f.admin}/cosplayers/${f.cid}/release`, { method: 'POST', json: { released: true } });
 
   const hide = await call(`${f.r}/items/${f.ids.anonPhoto}`, { method: 'POST', json: { hidden: true } });
-  assert.deepEqual(hide.body, { id: f.ids.anonPhoto, hidden: true });
+  assert.deepEqual({ ...hide.body, savedUntil: typeof hide.body.savedUntil }, { id: f.ids.anonPhoto, hidden: true, favorite: false, savedUntil: 'number' });
   assert.equal((await call(f.r)).body.items.find((i) => i.id === f.ids.anonPhoto).hidden, true);
 
   const res = await fetch(`${base}${f.r}/download.zip`);
@@ -483,20 +484,21 @@ test('hide, unhide, and delete; hidden items stay out of the zip', async () => {
   assert.equal(res.headers.get('content-type'), 'application/zip');
   assert.match(res.headers.get('content-disposition'), /^attachment; filename="fanwall-aki\.zip"$/);
   const files = readZip(Buffer.from(await res.arrayBuffer()));
-  assert.deepEqual(files.map((x) => x.name), ['messages.txt', 'photos/photo-0001.jpg'], 'hidden photo left out');
-  const text = files[0].data.toString('utf8');
+  assert.deepEqual(files.map((x) => x.name), ['index.html', 'manifest.json', 'messages.txt', 'photos/photo-0001.jpg', 'thumbs/photo-0001.jpg'], 'hidden photo left out');
+  const byName = Object.fromEntries(files.map((x) => [x.name, x.data]));
+  const text = byName['messages.txt'].toString('utf8');
   assert.match(text, /\[photo-0001\.jpg\] You were amazing \(from Mika\)/);
   assert.match(text, /Loved the wig/);
   assert.ok(!text.includes('Secret Name'), 'uncredited names never appear');
   assert.ok(!text.includes('not yet'), 'pending items never appear');
   const full = db.submissions[f.ids.credited].file;
-  assert.ok(files[1].data.equals(fs.readFileSync(mediaPath(`${full}.jpg`))), 'the full-size photo');
+  assert.ok(byName['photos/photo-0001.jpg'].equals(fs.readFileSync(mediaPath(`${full}.jpg`))), 'the full-size photo');
 
   await call(`${f.r}/items/${f.ids.anonPhoto}`, { method: 'POST', json: { hidden: false } });
   assert.equal((await call(f.r)).body.items.find((i) => i.id === f.ids.anonPhoto).hidden, false);
 
   const file = db.submissions[f.ids.anonPhoto].file;
-  assert.deepEqual((await call(`${f.r}/items/${f.ids.anonPhoto}`, { method: 'DELETE' })).body, { ok: true });
+  assert.equal((await call(`${f.r}/items/${f.ids.anonPhoto}`, { method: 'DELETE' })).body.ok, true);
   assert.equal(db.submissions[f.ids.anonPhoto], undefined);
   assert.ok(!fs.existsSync(mediaPath(`${file}.jpg`)) && !fs.existsSync(mediaPath(`${file}_t.jpg`)));
 });
@@ -584,7 +586,10 @@ test('the zip has edited photos, turned the same way as the preview, plus the un
   assert.equal(res.status, 200);
   const files = readZip(Buffer.from(await res.arrayBuffer()));
   assert.deepEqual(files.map((x) => x.name), [
-    'messages.txt', 'photos/photo-0001.jpg', 'photos/photo-0002.jpg', 'unedited/photo-0002.jpg', 'photos/photo-0003.jpg', 'unedited/photo-0003.jpg',
+    'index.html', 'manifest.json', 'messages.txt',
+    'photos/photo-0001.jpg', 'thumbs/photo-0001.jpg',
+    'photos/photo-0002.jpg', 'unedited/photo-0002.jpg', 'thumbs/photo-0002.jpg',
+    'photos/photo-0003.jpg', 'unedited/photo-0003.jpg', 'thumbs/photo-0003.jpg',
   ]);
   const byName = Object.fromEntries(files.map((x) => [x.name, x.data]));
   const stored = (sid) => fs.readFileSync(mediaPath(`${db.submissions[sid].file}.jpg`));
@@ -600,4 +605,302 @@ test('the zip has edited photos, turned the same way as the preview, plus the un
   assert.deepEqual([meta.width, meta.height], [200, 200]);
   const [r, , b] = await avg(turned);
   assert.ok(r > 180 && b < 60, `top square should be red, got ${r},${b}`);
+  // The gallery's thumbnail shows the edit too.
+  const thumb = byName['thumbs/photo-0003.jpg'];
+  const thumbMeta = await sharp(thumb).metadata();
+  assert.deepEqual([thumbMeta.width, thumbMeta.height], [200, 200]);
+  const [tr, , tb] = await avg(thumb);
+  assert.ok(tr > 180 && tb < 60, `edited thumb should be red, got ${tr},${tb}`);
+});
+
+// ---------- languages (Step 0) ----------
+test('errors are codes with details, never sentences', async () => {
+  const { eid, cid, admin } = await sharedEvent();
+  const bodies = [
+    (await call('/api/fan/nope/nope')).body,
+    (await submit(eid, cid, { message: 'no consent' })).body,
+    (await submit(eid, cid, { consent: '1', message: 'x'.repeat(281) })).body,
+    (await call('/api/nothing-here')).body,
+    (await call('/api/admin/not-a-token')).body,
+    (await call(`${admin}/event`, { method: 'PATCH', json: { retentionDays: 500 } })).body,
+    (await call(`${admin}/cosplayers`, { method: 'POST', json: { name: '' } })).body,
+    (await fetch(`${base}${admin}/event`, { method: 'PATCH', headers: { 'content-type': 'application/json' }, body: '{oops' }).then((r) => r.json())),
+  ];
+  assert.deepEqual(bodies.map((b) => b.error), [
+    'link_invalid', 'consent_required', 'too_long', 'not_found', 'admin_link_invalid', 'bad_retention', 'required', 'bad_request',
+  ]);
+  assert.deepEqual(bodies[2], { error: 'too_long', field: 'message', max: 280 });
+  assert.deepEqual(bodies[6], { error: 'required', field: 'cosplayerName' });
+  for (const b of bodies) for (const v of Object.values(b)) if (typeof v === 'string') assert.doesNotMatch(v, /\s/, JSON.stringify(b));
+});
+
+test('consent is offered in every language and stored with the language the fan read', async () => {
+  const { eid, cid } = await sharedEvent();
+  const page = (await call(`/api/fan/${eid}/${cid}`)).body;
+  assert.deepEqual(Object.keys(page.consent), ['en', 'zh-Hans', 'zh-Hant']);
+  for (const [lang, c] of Object.entries(page.consent)) assert.equal(c.lang, lang);
+  assert.equal(page.event.lang, null);
+
+  const ok = await submit(eid, cid, { consent: '1', consentLang: 'zh-Hant', message: '謝謝！' });
+  assert.equal(ok.status, 201);
+  const { consent } = db.submissions[ok.body.id];
+  assert.deepEqual(Object.keys(consent).sort(), ['at', 'lang', 'v']);
+  assert.equal(consent.lang, 'zh-Hant');
+  assert.equal(consent.v, page.consent['zh-Hant'].version);
+
+  for (const consentLang of [null, 'fr', 'zh']) {
+    const r = await submit(eid, cid, { consent: '1', consentLang, message: 'which words?' });
+    assert.equal(r.status, 400, String(consentLang));
+    assert.deepEqual(r.body, { error: 'bad_request', field: 'consentLang' });
+  }
+});
+
+test('the organizer sets a default language and every page gets it', async () => {
+  const { eid, cid, admin } = await makeEvent('Lang');
+  const patch = (json) => call(`${admin}/event`, { method: 'PATCH', json });
+  assert.equal((await patch({ lang: 'zh-Hant' })).body.event.lang, 'zh-Hant');
+  assert.equal((await patch({ name: 'Lang 2' })).body.event.lang, 'zh-Hant', 'left alone when not sent');
+  assert.equal((await call(admin)).body.event.lang, 'zh-Hant');
+  assert.equal((await call(`/api/fan/${eid}/${cid}`)).body.event.lang, 'zh-Hant');
+  assert.equal((await call(`/api/reveal/${await revealToken(admin, cid)}`)).body.event.lang, 'zh-Hant', 'even before release');
+  assert.equal((await patch({ lang: 'fr' })).status, 400);
+  assert.equal((await patch({ lang: null })).body.event.lang, null);
+  assert.equal((await patch({ lang: '' })).body.event.lang, null);
+});
+
+test('messages.txt in the ZIP follows the page language; the fans\' own words stay as written', async () => {
+  const f = await revealFixture();
+  await call(`${f.admin}/cosplayers/${f.cid}/release`, { method: 'POST', json: { released: true } });
+  const text = async (q) => {
+    const files = readZip(Buffer.from(await (await fetch(`${base}${f.r}/download.zip${q}`)).arrayBuffer()));
+    return files.find((x) => x.name === 'messages.txt').data.toString('utf8');
+  };
+  const zh = await text('?lang=zh-Hant');
+  assert.match(zh, /^Shared的粉絲送給你的照片和留言/);
+  assert.match(zh, /\[photo-0001\.jpg\] You were amazing（來自Mika）/);
+  assert.match(await text('?lang=zh-Hans'), /的粉丝送给你的照片和留言/);
+  assert.match(await text('?lang=bogus'), /^Photos and notes from your fans at Shared/);
+});
+
+test('a bad organizer link still gets its page, with a 404, so it can explain in any language', async () => {
+  const r = await call('/admin/not-a-token');
+  assert.equal(r.status, 404);
+  assert.match(r.body, /admin\.js/);
+  assert.equal(r.headers.get('cache-control'), 'no-store');
+});
+
+// ---------- "Saved until" (Step 1) ----------
+test('reveal: savedUntil is the 90-day cap of the earliest visible item while open, then close plus retention', async () => {
+  const DAY = 86400e3;
+  const ev = await makeEvent('Dates');
+  const { admin, eid, cid } = ev;
+  const token = await revealToken(admin, cid);
+  const add = async (message, createdAt, status) => {
+    const id = (await submit(eid, cid, { consent: '1', message })).body.id;
+    db.submissions[id].createdAt = createdAt;
+    if (status) await call(`${admin}/submissions/${id}`, { method: 'PATCH', json: { status } });
+    return id;
+  };
+  const now = Date.now();
+  const pendingOld = await add('pending, oldest', now - 20 * DAY); // not visible to the cosplayer, so it doesn't count
+  const first = await add('first', now - 10 * DAY, 'approved');
+  const second = await add('second', now - 5 * DAY, 'approved');
+  assert.ok(pendingOld);
+
+  assert.equal((await call(`/api/reveal/${token}`)).body.savedUntil, null, 'nothing before release');
+  await call(`${admin}/cosplayers/${cid}/release`, { method: 'POST', json: { released: true } });
+  assert.equal((await call(`/api/reveal/${token}`)).body.savedUntil, now - 10 * DAY + 90 * DAY);
+
+  // Hiding the earliest item moves the date to the next one; showing it again moves it back.
+  const hide = (id, hidden) => call(`/api/reveal/${token}/items/${id}`, { method: 'POST', json: { hidden } });
+  assert.equal((await hide(first, true)).body.savedUntil, now - 5 * DAY + 90 * DAY);
+  assert.equal((await hide(first, false)).body.savedUntil, now - 10 * DAY + 90 * DAY);
+
+  // Closing with 7 days of retention comes well before the cap.
+  const closed = (await call(`${admin}/event`, { method: 'PATCH', json: { open: false, retentionDays: 7 } })).body.event;
+  assert.equal((await call(`/api/reveal/${token}`)).body.savedUntil, closed.closedAt + 7 * DAY);
+
+  // Deleting everything leaves nothing to save.
+  for (const id of [first, second]) await call(`/api/reveal/${token}/items/${id}`, { method: 'DELETE' });
+  assert.equal((await call(`/api/reveal/${token}`)).body.savedUntil, null);
+});
+
+// ---------- "Download all" bundle (Step 2) ----------
+test('the bundle holds only what the cosplayer sees: no ids, tokens, codes, hashes, hidden or pending items', async () => {
+  const f = await revealFixture();
+  await call(`${f.admin}/cosplayers/${f.cid}/release`, { method: 'POST', json: { released: true } });
+  const hiddenId = (await submit(f.eid, f.cid, { consent: '1', message: 'hidden by the cosplayer' }, await jpeg(1200, 900))).body.id;
+  await call(`${f.admin}/submissions/bulk`, { method: 'POST', json: { ids: [hiddenId], status: 'approved' } });
+  await call(`${f.r}/items/${hiddenId}`, { method: 'POST', json: { hidden: true } });
+  const bigId = (await submit(f.eid, f.cid, { consent: '1' }, await jpeg(1600, 1200))).body.id;
+  await call(`${f.admin}/submissions/bulk`, { method: 'POST', json: { ids: [bigId], status: 'approved' } });
+
+  const res = await fetch(`${base}${f.r}/download.zip?lang=zh-Hant&tz=-480`);
+  assert.equal(res.status, 200);
+  const files = readZip(Buffer.from(await res.arrayBuffer()));
+  const byName = Object.fromEntries(files.map((x) => [x.name, x.data]));
+  assert.equal(files[0].name, 'index.html', 'the gallery comes first');
+  const manifest = JSON.parse(byName['manifest.json'].toString('utf8'));
+
+  assert.equal(manifest.schemaVersion, 1);
+  assert.equal(manifest.language, 'zh-Hant');
+  assert.deepEqual(manifest.event, { name: 'Shared', date: manifest.event.date });
+  assert.match(manifest.event.date, /^\d{4}-\d{2}-\d{2}$/);
+  assert.deepEqual(manifest.cosplayer, { name: 'Aki' });
+  assert.equal(manifest.revealStyle, 'mosaic');
+  assert.deepEqual(manifest.items.map(({ type, credit, note, edited }) => ({ type, credit, note, edited })), [
+    { type: 'photo', credit: 'Mika', note: 'You were amazing', edited: false },
+    { type: 'photo', credit: null, note: null, edited: false },
+    { type: 'note', credit: null, note: 'Loved the wig', edited: undefined },
+    { type: 'photo', credit: null, note: null, edited: false },
+  ], 'approved and not hidden, in upload order; the uncredited name is left out');
+
+  // Every file the manifest names is in the ZIP; thumbnails are grid-sized.
+  for (const item of manifest.items.filter((i) => i.type === 'photo')) {
+    assert.ok(byName[item.file] && byName[item.thumb], item.file);
+    const meta = await sharp(byName[item.thumb]).metadata();
+    assert.ok(Math.max(meta.width, meta.height) <= 600, `${item.thumb}: ${meta.width}x${meta.height}`);
+  }
+  assert.equal((await sharp(byName['thumbs/photo-0003.jpg']).metadata()).width, 600, 'a big photo is shrunk to 600');
+
+  // Nothing in the text of the bundle can be used against the API, or names someone who didn't ask.
+  const text = ['index.html', 'manifest.json', 'messages.txt'].map((n) => byName[n].toString('utf8')).join('\n');
+  const cos = db.cosplayers[f.cid], ev = db.events[f.eid];
+  const subs = Object.values(db.submissions).filter((s) => s.cosplayerId === f.cid);
+  const secrets = [cos.id, cos.revealToken, ev.id, ev.organizerToken, ...subs.flatMap((s) => [s.id, s.codeHash, s.file].filter(Boolean))];
+  for (const secret of secrets) assert.ok(!text.includes(secret), `leaked ${secret}`);
+  for (const words of ['Secret Name', 'not yet', 'hidden by the cosplayer']) assert.ok(!text.includes(words), words);
+  assert.ok(!Object.keys(byName).some((n) => /[0-9a-f]{32}/.test(n)), 'no file ids in names');
+
+  // The gallery is in the page language and loads only files from the ZIP.
+  const html = byName['index.html'].toString('utf8');
+  assert.match(html, /<html lang="zh-Hant">/);
+  assert.match(html, /謝謝你，Aki/);
+  assert.doesNotMatch(html, /<script|https?:/);
+  for (const [, ref] of html.matchAll(/(?:src|href)="([^"]*)"/g)) assert.ok(byName[ref], `${ref} is in the ZIP`);
+});
+
+test('the bundle\'s date follows the browser\'s time zone; a bad tz is ignored', async () => {
+  const f = await revealFixture();
+  await call(`${f.admin}/cosplayers/${f.cid}/release`, { method: 'POST', json: { released: true } });
+  const first = Math.min(...Object.values(db.submissions).filter((s) => s.cosplayerId === f.cid && s.status === 'approved').map((s) => s.createdAt));
+  const dateFor = async (q) => {
+    const files = readZip(Buffer.from(await (await fetch(`${base}${f.r}/download.zip${q}`)).arrayBuffer()));
+    return JSON.parse(files.find((x) => x.name === 'manifest.json').data.toString('utf8')).event.date;
+  };
+  const local = (tz) => new Date(first - tz * 60e3).toISOString().slice(0, 10);
+  assert.equal(await dateFor('?tz=-840'), local(-840));
+  assert.equal(await dateFor('?tz=720'), local(720));
+  assert.equal(await dateFor('?tz=9999'), local(0));
+  assert.equal(await dateFor('?tz=abc'), local(0));
+});
+
+// ---------- reveal styles (Step 3) ----------
+test('the event sets the default reveal style; mosaic by default; the bundle records it', async () => {
+  const ev = await makeEvent('Styles');
+  const { admin, cid } = ev;
+  const patch = (json) => call(`${admin}/event`, { method: 'PATCH', json });
+  assert.equal((await call(admin)).body.event.style, 'mosaic');
+  const token = await revealToken(admin, cid);
+  assert.equal((await call(`/api/reveal/${token}`)).body.event.style, 'mosaic');
+  assert.equal((await patch({ style: 'constellation' })).body.event.style, 'constellation');
+  assert.equal((await patch({ name: 'Styles 2' })).body.event.style, 'constellation', 'left alone when not sent');
+  for (const bad of ['Polaroid', 'constructor', '', null, 3]) assert.equal((await patch({ style: bad })).status, 400, String(bad));
+  assert.equal((await call(`/api/reveal/${token}`)).body.event.style, 'constellation');
+
+  await submit(ev.eid, cid, { consent: '1', message: 'hi' });
+  const id = Object.values(db.submissions).find((s) => s.cosplayerId === cid).id;
+  await call(`${admin}/submissions/${id}`, { method: 'PATCH', json: { status: 'approved' } });
+  await call(`${admin}/cosplayers/${cid}/release`, { method: 'POST', json: { released: true } });
+  const files = readZip(Buffer.from(await (await fetch(`${base}/api/reveal/${token}/download.zip`)).arrayBuffer()));
+  assert.equal(JSON.parse(files.find((x) => x.name === 'manifest.json').data.toString('utf8')).revealStyle, 'constellation');
+
+  delete db.events[ev.eid].style; // an event from before styles
+  assert.equal((await call(`/api/reveal/${token}`)).body.event.style, 'mosaic');
+});
+
+test('a cosplayer can have their own reveal style; null goes back to the event default', async () => {
+  const ev = await makeEvent('Own style');
+  const { admin, cid } = ev;
+  const { cid: other } = await addCosplayer(ev, 'Mei');
+  const tokenOf = (id) => revealToken(admin, id);
+  const set = (id, style) => call(`${admin}/cosplayers/${id}`, { method: 'PATCH', json: { style } });
+  await call(`${admin}/event`, { method: 'PATCH', json: { style: 'polaroid' } });
+  assert.deepEqual((await set(cid, 'constellation')).body, { style: 'constellation' });
+  assert.equal((await call(`/api/reveal/${await tokenOf(cid)}`)).body.event.style, 'constellation');
+  assert.equal((await call(`/api/reveal/${await tokenOf(other)}`)).body.event.style, 'polaroid', 'others keep the default');
+  const list = (await call(admin)).body.cosplayers;
+  assert.equal(list.find((c) => c.id === cid).style, 'constellation');
+  assert.equal(list.find((c) => c.id === other).style, null);
+  for (const bad of ['Mosaic', 'constructor', '', 7, undefined]) assert.equal((await set(cid, bad)).status, 400, String(bad));
+  assert.deepEqual((await set(cid, null)).body, { style: null });
+  assert.equal((await call(`/api/reveal/${await tokenOf(cid)}`)).body.event.style, 'polaroid');
+  const elsewhere = await makeEvent('Elsewhere');
+  assert.equal((await call(`${elsewhere.admin}/cosplayers/${cid}`, { method: 'PATCH', json: { style: 'mosaic' } })).status, 404);
+});
+
+test('the organizer previews a reveal before release: approved items only, view-only, their own seed', async () => {
+  const ev = await makeEvent('Preview');
+  const { admin, eid, cid, token } = ev;
+  const ok = (await submit(eid, cid, { consent: '1', message: 'approved one' })).body.id;
+  await submit(eid, cid, { consent: '1', message: 'still pending' });
+  await call(`${admin}/submissions/${ok}`, { method: 'PATCH', json: { status: 'approved' } });
+  await call(`${admin}/cosplayers/${cid}`, { method: 'PATCH', json: { style: 'constellation' } });
+
+  const p = (await call(`${admin}/cosplayers/${cid}/preview`)).body;
+  assert.equal(p.ready, true, 'shown as if released');
+  assert.equal(p.preview, true);
+  assert.equal(p.event.style, 'constellation');
+  assert.deepEqual(p.items.map((i) => i.message), ['approved one']);
+  assert.equal(p.seed, await revealToken(admin, cid), 'laid out exactly as the real page');
+  assert.equal(db.cosplayers[cid].released, false, 'previewing releases nothing');
+  assert.equal((await call(`/api/reveal/${p.seed}`)).body.items.length, 0, 'the real page still shows nothing');
+
+  const other = await makeEvent('Other');
+  assert.equal((await call(`${other.admin}/cosplayers/${cid}/preview`)).status, 404, 'scoped to the organizer\'s own event');
+  assert.equal((await call(`/api/admin/nope/cosplayers/${cid}/preview`)).status, 404);
+  const page = await call(`/admin/${token}/preview/${cid}`);
+  assert.equal(page.status, 200);
+  assert.match(page.body, /reveal\.js/);
+  assert.equal(page.headers.get('cache-control'), 'no-store');
+  assert.equal((await call(`/admin/nope/preview/${cid}`)).status, 404);
+});
+
+// ---------- favorites (Step 4) ----------
+test('favorites: private stars that survive hide and unhide, and a favorites-only ZIP', async () => {
+  const f = await revealFixture();
+  await call(`${f.admin}/cosplayers/${f.cid}/release`, { method: 'POST', json: { released: true } });
+  const item = (id, json) => call(`${f.r}/items/${id}`, { method: 'POST', json });
+  const view = async () => Object.fromEntries((await call(f.r)).body.items.map((i) => [i.id, i]));
+
+  assert.equal((await item(f.ids.credited, { favorite: true })).body.favorite, true);
+  assert.equal((await item(f.ids.secretNote, { favorite: true })).body.favorite, true);
+  assert.equal((await view())[f.ids.anonPhoto].favorite, false);
+  assert.equal((await item(f.ids.credited, { favorite: 'yes' })).status, 400);
+  assert.equal((await item(f.ids.credited, {})).status, 400);
+
+  // Hiding and showing again leaves the star alone.
+  await item(f.ids.credited, { hidden: true });
+  assert.equal((await view())[f.ids.credited].favorite, true);
+  await item(f.ids.credited, { hidden: false });
+  const v = await view();
+  assert.equal(v[f.ids.credited].favorite, true);
+  assert.equal(v[f.ids.credited].hidden, false);
+
+  // The organizer never sees them.
+  assert.ok(!JSON.stringify((await call(f.admin)).body).includes('favorite'));
+
+  const zip = async (q) => {
+    const files = readZip(Buffer.from(await (await fetch(`${base}${f.r}/download.zip${q}`)).arrayBuffer()));
+    return { names: files.map((x) => x.name), manifest: JSON.parse(files.find((x) => x.name === 'manifest.json').data.toString('utf8')) };
+  };
+  const only = await zip('?only=favorites');
+  assert.deepEqual(only.manifest.items.map((i) => [i.note, i.favorite]), [['You were amazing', true], ['Loved the wig', true]]);
+  assert.deepEqual(only.names.filter((n) => n.startsWith('photos/')), ['photos/photo-0001.jpg'], 'the unstarred photo stays out');
+  const all = await zip('');
+  assert.deepEqual(all.manifest.items.map((i) => i.favorite), [true, false, true]);
+
+  // A starred item that's hidden stays out of a favorites-only ZIP too.
+  await item(f.ids.secretNote, { hidden: true });
+  assert.deepEqual((await zip('?only=favorites')).manifest.items.map((i) => i.note), ['You were amazing']);
 });
