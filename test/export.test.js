@@ -58,6 +58,9 @@ test('the static demo publishes only what the reveal API would show, and no secr
       assert.ok(!fs.existsSync(path.join(out, `api/reveal/kai-${style}.json`)));
     }
     assert.match(hub, /href="r\/sora-constellation\/"/);
+    // The year in review works as is: it only reads files the person picks.
+    assert.match(hub, /href="review\/"/);
+    assert.match(fs.readFileSync(path.join(out, 'review/index.html'), 'utf8'), /<base href="\.\.\/">[\s\S]*src="js\/review\.js"/);
     assert.match(fs.readFileSync(path.join(out, 'api/admin/demo/qr/aki.svg'), 'utf8'), /<svg/);
   } finally {
     fs.rmSync(out, { recursive: true, force: true });

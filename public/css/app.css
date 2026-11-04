@@ -242,6 +242,28 @@ dialog::backdrop { background: rgba(0, 0, 0, 0.7); }
 .demo-links span { font-size: 14px; color: var(--muted); }
 .demo-links .demo-styles a { font: 500 14px/1.4 var(--font-body); letter-spacing: 0; color: var(--blue); }
 
+/* ---------- year in review ---------- */
+.review-page main { max-width: 980px; }
+.pick .button.big { margin: 4px 0 12px; }
+.pick input:focus-visible + label { outline: 2px solid var(--blue); outline-offset: 2px; }
+.review-errors { list-style: none; padding: 0; margin: 12px 0 0; color: var(--bad); font-weight: 500; }
+.review-year-h { font-size: clamp(48px, 10vw, 96px); letter-spacing: -0.05em; margin: 48px 0 16px; }
+.review-spread {
+  display: grid; gap: 20px; grid-template-columns: minmax(0, 1.1fr) minmax(0, 1fr); align-items: center;
+  background: var(--surface-1); border-radius: 30px; padding: 20px; margin-bottom: 20px;
+}
+@media (max-width: 720px) { .review-spread { grid-template-columns: 1fr; } }
+.review-picture { display: flex; align-items: center; justify-content: center; min-height: 200px; background: var(--canvas); border-radius: 20px; overflow: hidden; }
+.review-picture canvas { display: block; width: 100%; height: auto; }
+.review-text h3 { font: 500 clamp(28px, 4vw, 40px)/1.05 var(--font-display); letter-spacing: -0.03em; margin: 0 0 16px; overflow-wrap: anywhere; }
+.review-text .eyebrow { color: var(--muted); }
+.review-notes { display: grid; gap: 10px; margin-bottom: 16px; }
+.review-notes blockquote { margin: 0; padding: 14px 16px; background: var(--surface-2); border-radius: 15px; }
+.review-notes blockquote p { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; }
+.review-notes footer { color: var(--muted); font-size: 13px; margin-top: 6px; }
+.review-end { margin-top: 48px; }
+.review-end h2 { font-size: clamp(32px, 6vw, 52px); letter-spacing: -0.04em; }
+
 /* ---------- dashboard ---------- */
 .dash-head { display: flex; flex-wrap: wrap; gap: 20px; align-items: flex-end; justify-content: space-between; padding: 18px 0 26px; }
 .dash-head h1 { font-size: clamp(40px, 6vw, 85px); overflow-wrap: anywhere; }
@@ -426,7 +448,8 @@ button.link:hover { background: none; color: var(--ink); }
   position: fixed; top: calc(12px + env(safe-area-inset-top)); right: 12px; z-index: 5; margin: 0;
   padding: 7px 14px; border-radius: 100px; background: var(--warn); color: #000000; font-size: 13px; font-weight: 600;
 }
-.previewing :is(#manage-open, #intro-manage, #lb-edit, .saved-dl) { display: none !important; }
+.previewing :is(#manage-open, #intro-manage, #lb-edit, .saved-dl, #remind-row) { display: none !important; }
+#remind-row p { margin: 6px 0 0; }
 
 /* Manage drawer and lightbox (native <dialog>: focus trap and Esc for free). */
 .drawer { width: min(560px, 100vw - 24px); max-height: min(86vh, 900px); margin: auto; overflow: auto; }

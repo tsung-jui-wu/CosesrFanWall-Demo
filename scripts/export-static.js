@@ -109,6 +109,7 @@ for (const [, slug] of slugOf) {
   page('print.html', `admin/demo/print/${slug}/index.html`, { banner: true });
 }
 page('admin.html', 'admin/demo/index.html', { banner: true });
+page('review.html', 'review/index.html', { banner: true }); // works fully here: it only reads files the person picks
 
 const name = (slug) => cosplayers.find((c) => slugOf.get(c.id) === slug)?.name ?? slug;
 const revealCases = ['yuki', 'aki', 'mei', 'rin', 'sora', 'kai'].filter((slug) => [...slugOf.values()].includes(slug));
@@ -155,6 +156,11 @@ ${revealCases.map((slug) => `        <li><a href="r/${slug}/">${attr(name(slug))
       <h2 id="org-h" data-i18n="demo.hub.orgHeading"></h2>
       <p class="muted" data-i18n="demo.hub.orgText"></p>
       <ul class="demo-links"><li><a href="admin/demo/" data-i18n="admin.heading"></a></li></ul>
+    </section>
+    <section class="panel" aria-labelledby="yir-h">
+      <h2 id="yir-h" data-i18n="review.title"></h2>
+      <p class="muted" data-i18n="demo.hub.reviewText"></p>
+      <ul class="demo-links"><li><a href="review/" data-i18n="review.title"></a></li></ul>
     </section>
   </main>
   <script type="module" src="js/i18n.js"></script>

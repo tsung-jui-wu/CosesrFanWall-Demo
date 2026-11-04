@@ -735,6 +735,7 @@ const requireOrganizer = (req, res, next) => {
 };
 
 app.get('/', page('index.html'));
+app.get('/review', page('review.html')); // the year in review: reads ZIPs on the device, holds no data
 app.get('/e/:eid/c/:cid', page('fan.html')); // the page itself explains bad or closed links
 app.get('/r/:token', page('reveal.html')); // the page shows "not ready" / "not valid" itself
 app.get('/admin/:token', requireOrganizer, page('admin.html'));

@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="en" class="i18n-pending">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="robots" content="noindex">
+  <title data-i18n="review.docTitle"></title>
+  <link rel="icon" href="/favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="/css/app.css">
+</head>
+<body class="review-page">
+  <!-- Everything here happens on this device: the ZIPs are read in the browser, nothing is uploaded,
+       and the page itself carries no data. -->
+  <main>
+    <header class="topbar">
+      <span class="wordmark">FanWall</span>
+      <div class="lang-switch" data-lang-switch></div>
+    </header>
+    <section class="spotlight" aria-labelledby="review-h">
+      <h1 id="review-h" data-i18n="review.title"></h1>
+      <p class="lead" data-i18n="review.lead"></p>
+    </section>
+
+    <section class="panel pick" id="pick" aria-labelledby="pick-h">
+      <h2 id="pick-h" data-i18n="review.pick.heading"></h2>
+      <p class="muted" data-i18n="review.pick.text"></p>
+      <input class="visually-hidden" type="file" id="files" accept=".zip,application/zip" multiple>
+      <label class="button primary big" for="files" data-i18n="review.pick.button"></label>
+      <p class="small muted" data-i18n="review.pick.private"></p>
+    </section>
+
+    <p class="muted" id="reading" role="status" hidden></p>
+    <ul class="review-errors" id="errors"></ul>
+    <div id="spreads"></div>
+  </main>
+  <div id="status" role="status" aria-live="polite"></div>
+  <script type="module" src="/js/review.js"></script>
+</body>
+</html>

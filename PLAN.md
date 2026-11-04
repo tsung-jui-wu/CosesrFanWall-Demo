@@ -59,6 +59,7 @@ Pages (static HTML, `Cache-Control: no-store` for token pages):
 | `/admin/:token/print/:cosplayerId` | printable QR sign |
 | `/admin/:token/preview/:cosplayerId` | the organizer's preview of that reveal page, view-only |
 | `/r/:revealToken` | cosplayer reveal and controls |
+| `/review` | the year in review: no data of its own, it reads the "Download all" ZIPs the cosplayer picks, on their device |
 
 API:
 
@@ -149,6 +150,12 @@ Tests (`test/mosaic.test.js`) with synthetic data (red disc on blue background; 
 **Print sign**: big QR, cosplayer name, one line of copy, event name; print stylesheet.
 
 **Reveal page** (cosplayer): if not released, a friendly "not ready yet" screen. Otherwise a full-screen dark stage: intro card with event and cosplayer name, a "Play" button (also satisfies autoplay rules), then the animation: tiles fly from scattered/floating start positions into their cells following `order` and `delay`, tint overlays fade in, notes drift in and settle in the margins, final hold shows the finished mosaic. Float mode loops gently. Controls: replay, skip, "Manage" drawer (list approved items with hide/unhide/delete), "Download all (ZIP)", "Export mosaic" (render at 2160 px on the long side to canvas, `toBlob` as JPEG/PNG, `navigator.share({files})` when available else download), "Remove everything and close this page" with a confirm step. Respect `prefers-reduced-motion` (skip to final frame). Hidden items are excluded from both animation and export.
+
+The Manage drawer also has "Add reminders to my calendar": an `.ics` file made in the browser (`public/js/ics.js`) with a reminder to download a few days before the page is deleted and one on 1 December for the year in review. No email is asked for, nothing is sent, and the file carries no tokens.
+
+**Year in review** (`/review`, cosplayer): they pick the ZIPs they saved with "Download all". `public/js/bundle-read.js` reads them by byte range (store-only ZIPs, so no unzip library) through one `readBundle(source)` function; a picked file is the only source for now, and any other source (a link, a cloud drive) needs its own privacy review first. `public/js/review-plan.js` groups events by year, oldest first, one spread per event: the picture redrawn in that event's style from the bundle's thumbnails and `picture.jpg`, and up to three notes, favorites first, then a seeded pick. A closing page ends it. Save image saves the picture only. No counts, sizes, or "busiest event" anywhere. Nothing leaves the device.
+
+**Pictures** (`public/js/render.js`): one registry, `RENDERERS`, draws a style's still picture from photos (and the mosaic image); the reveal page's Save image and the year in review both use it. A new style adds its planner to `styles.js` and a renderer here (the file has a checklist).
 
 Performance notes: use thumbnails for tiles; preload and decode with `createImageBitmap`; render with a single canvas and `requestAnimationFrame`; cap at about 2400 cells.
 
