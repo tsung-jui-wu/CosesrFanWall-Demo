@@ -20,6 +20,8 @@ npm start
 
 `npm run seed` creates a demo event and prints its organizer, fan, and reveal links. Open them at http://localhost:3000 (or set `PORT`). `npm test` runs the tests.
 
+To test with real photos, `npm run import -- <folder>` adds every image in a folder as fan submissions for a new test event (or `--event <id>` / `--cosplayer <id>` for an existing one). They arrive `pending` for moderation; add `--status approved` to skip it. Stop the server first, as with the seed.
+
 ## Host it for a real event
 
 FanWall is one Node process that keeps its data in a folder (`db.json` plus the photos). Any host that can run Node 22 and give it a disk that survives restarts will do: a small VPS (AWS Lightsail or EC2, DigitalOcean, Hetzner), Fly.io with a volume, Render or Railway with a disk.

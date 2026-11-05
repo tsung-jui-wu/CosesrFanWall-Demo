@@ -11,6 +11,7 @@
     "start": "node server.js",
     "dev": "node --watch server.js",
     "seed": "node scripts/seed-demo.js",
+    "import": "node scripts/import-photos.js",
     "export": "node scripts/export-static.js"
   },
   "keywords": [],
