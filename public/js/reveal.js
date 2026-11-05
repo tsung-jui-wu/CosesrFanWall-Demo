@@ -4,7 +4,7 @@
 // skip, replay, and resize need no extra state.
 import { api, el, toast, loadBitmap, STATIC, segmentAfter, downloadBlob, saveOrShare } from './api.js';
 import { makeIcs, nextDecember } from './ics.js';
-import { tileFeature, targetCells, chooseGrid, planMosaic, mulberry32, hashSeed } from './mosaic.js';
+import { tileFeature, targetCells, chooseLayout, planMosaic, mulberry32, hashSeed } from './mosaic.js';
 import { planWall, PRINT_RATIO } from './polaroid.js';
 import { planSky } from './constellation.js';
 import { styleOf, pickPool, cycleItem, EXPORT, EXPORT_MAX_PHOTO } from './styles.js';
@@ -105,9 +105,10 @@ async function prepare(onProgress) {
   if (!photos.length) return float(); // only notes: nothing to assemble or pin up, and nothing to save
   if (style !== 'mosaic' || !base) return prepareArt(style === 'constellation' ? 'sky' : 'wall', photos, notes, tick, onProgress);
 
-  // Target: the base image at (2*cols) x (2*rows), one pixel per cell quadrant.
+  // Target: the base image at (2*cols) x (2*rows), one pixel per grid unit quadrant. A cell is one
+  // unit, or 2x2 units where the picture is flat (chooseLayout).
   const aspect = base.width / base.height;
-  const { cols, rows } = chooseGrid(photos.length, aspect);
+  const { cols, rows, cells } = chooseLayout(photos.length, aspect);
   const target = makeCanvas(cols * 2, rows * 2);
   const tctx = target.getContext('2d', { willReadFrequently: true });
   shrinkInto(target, base, 0, 0, base.width, base.height, cols * 2, rows * 2);
@@ -137,7 +138,7 @@ async function prepare(onProgress) {
   })).filter(Boolean);
   if (!tiles.length) return float(); // none of the photos would load
 
-  const plan = planMosaic({ cols, rows, cellFeatures: features, meanRGB, tiles, seed });
+  const plan = planMosaic({ cols, rows, cellFeatures: features, meanRGB, tiles, seed, opts: { cells } });
   // Photos the plan didn't use float with the notes.
   const leftover = new Set(plan.leftover);
   const extras = await floatPhotos(tiles.filter((t) => leftover.has(t.id)).map((t) => t.item));
@@ -185,7 +186,7 @@ function buildScene(s) {
     s.floatStart = s.tilesEnd - 600;
     s.floatSpan = null;
   } else if (s.mode === 'mosaic') {
-    const N = s.cols * s.rows;
+    const N = s.plan.cells.length;
     s.start = new Float64Array(N);
     s.fly = new Float32Array(N * 4); // start x, start y (0..1 of stage), rotation, scale
     s.tint = new Array(N);
@@ -461,12 +462,13 @@ function slotContent(k, t) {
 const pieceTurn = (k, t, K) => turn(k, t - (L.end + 1500), K, scene.pics.length, PIECE_CYCLE_MS, 900);
 
 // ---------- drawing ----------
+// Cell i's box in rect: x, y, w, h. Edges are rounded, not sizes, so neighboring cells meet without seams.
 function cellBox(i, rect = L.rect) {
-  const col = i % scene.cols, row = Math.floor(i / scene.cols);
-  const cw = rect.w / scene.cols, ch = rect.h / scene.rows;
-  // Round edges, not sizes, so neighboring cells meet without seams.
-  const x0 = Math.round(rect.x + col * cw), x1 = Math.round(rect.x + (col + 1) * cw);
-  const y0 = Math.round(rect.y + row * ch), y1 = Math.round(rect.y + (row + 1) * ch);
+  return boxOf(scene.plan.cells[i], rect.x, rect.y, rect.w / scene.cols, rect.h / scene.rows);
+}
+function boxOf({ col, row, size }, x, y, cw, ch) {
+  const x0 = Math.round(x + col * cw), x1 = Math.round(x + (col + size) * cw);
+  const y0 = Math.round(y + row * ch), y1 = Math.round(y + (row + size) * ch);
   return [x0, y0, x1 - x0, y1 - y0];
 }
 
@@ -670,16 +672,11 @@ function drawZoomed() {
   ctx.drawImage(scene.base, rect.x, rect.y, rect.w, rect.h); // full resolution, not the screen-sized copy
   // Only the cells on screen.
   const cw = rect.w / scene.cols, ch = rect.h / scene.rows;
-  const c0 = clamp(Math.floor((-view.x / view.s - rect.x) / cw), 0, scene.cols - 1);
-  const c1 = clamp(Math.floor(((W - view.x) / view.s - rect.x) / cw), 0, scene.cols - 1);
-  const r0 = clamp(Math.floor((-view.y / view.s - rect.y) / ch), 0, scene.rows - 1);
-  const r1 = clamp(Math.floor(((H - view.y) / view.s - rect.y) / ch), 0, scene.rows - 1);
-  for (let row = r0; row <= r1; row++) {
-    for (let col = c0; col <= c1; col++) {
-      const i = row * scene.cols + col;
-      if (scene.plan.cells[i].tileId !== null) drawLandedCell(ctx, i, 1);
-    }
-  }
+  const c0 = Math.floor((-view.x / view.s - rect.x) / cw), c1 = Math.floor(((W - view.x) / view.s - rect.x) / cw);
+  const r0 = Math.floor((-view.y / view.s - rect.y) / ch), r1 = Math.floor(((H - view.y) / view.s - rect.y) / ch);
+  scene.plan.cells.forEach((c, i) => {
+    if (c.tileId !== null && c.col <= c1 && c.col + c.size > c0 && c.row <= r1 && c.row + c.size > r0) drawLandedCell(ctx, i, 1);
+  });
   ctx.setTransform(1, 0, 0, 1, 0, 0);
   ctx.globalAlpha = 1;
 }
@@ -718,7 +715,7 @@ function itemAt(px, py) {
   const x = (px - view.x) / view.s, y = (py - view.y) / view.s;
   if (x < rect.x || y < rect.y || x >= rect.x + rect.w || y >= rect.y + rect.h) return null;
   const col = Math.floor(((x - rect.x) / rect.w) * scene.cols), row = Math.floor(((y - rect.y) / rect.h) * scene.rows);
-  const id = scene.plan.cells[row * scene.cols + col]?.tileId;
+  const id = scene.plan.cells[scene.plan.grid[row * scene.cols + col]]?.tileId;
   return id ? data.items.find((i) => i.id === id) : null;
 }
 
@@ -970,13 +967,12 @@ function renderExport() {
   g.drawImage(s.base, 0, 0, w, h);
   for (const i of s.plan.order) {
     const cell = s.plan.cells[i];
-    const x0 = Math.round((cell.col * w) / s.cols), x1 = Math.round(((cell.col + 1) * w) / s.cols);
-    const y0 = Math.round((cell.row * h) / s.rows), y1 = Math.round(((cell.row + 1) * h) / s.rows);
+    const [x, y, cw, ch] = boxOf(cell, 0, 0, w / s.cols, h / s.rows);
     g.globalAlpha = 1;
-    g.drawImage(s.imgs.get(cell.tileId), x0, y0, x1 - x0, y1 - y0);
+    g.drawImage(s.imgs.get(cell.tileId), x, y, cw, ch);
     g.globalAlpha = cell.tint.alpha;
     g.fillStyle = s.tint[i];
-    g.fillRect(x0, y0, x1 - x0, y1 - y0);
+    g.fillRect(x, y, cw, ch);
   }
   return toJpeg(c);
 }

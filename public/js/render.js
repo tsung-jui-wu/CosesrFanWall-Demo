@@ -7,7 +7,7 @@
 // A renderer takes photos (canvases or bitmaps, any shape) and returns a canvas. Whatever the style,
 // photos are drawn small (styles.js EXPORT_MAX_PHOTO) and no notes or names are ever drawn: fans
 // agreed to appear as small tiles in a picture the cosplayer may post, and to nothing more.
-import { tileFeature, targetCells, chooseGrid, planMosaic } from './mosaic.js';
+import { tileFeature, targetCells, chooseLayout, planMosaic } from './mosaic.js';
 import { planWall } from './polaroid.js';
 import { planSky } from './constellation.js';
 import { isStyle, DEFAULT_STYLE, EXPORT } from './styles.js';
@@ -91,7 +91,7 @@ const sky = still(skyScene);
 function mosaic({ photos, picture, seed }) {
   if (!picture) return null;
   const aspect = picture.width / picture.height;
-  const { cols, rows } = chooseGrid(photos.length, aspect);
+  const { cols, rows, cells } = chooseLayout(photos.length, aspect);
   const target = makeCanvas(cols * 2, rows * 2);
   shrinkInto(target, picture, 0, 0, picture.width, picture.height, cols * 2, rows * 2);
   const { features, meanRGB } = targetCells(target.getContext('2d', { willReadFrequently: true }).getImageData(0, 0, cols * 2, rows * 2).data, cols, rows);
@@ -105,7 +105,7 @@ function mosaic({ photos, picture, seed }) {
     shrinkInto(px2, tile, 0, 0, tw, th, 2, 2);
     return { id: String(i), feature: tileFeature(px2g.getImageData(0, 0, 2, 2).data), img: tile };
   });
-  const plan = planMosaic({ cols, rows, cellFeatures: features, meanRGB, tiles, seed });
+  const plan = planMosaic({ cols, rows, cellFeatures: features, meanRGB, tiles, seed, opts: { cells } });
   const imgs = new Map(tiles.map((t) => [t.id, t.img]));
   const w = aspect >= 1 ? MOSAIC_PX : Math.round(MOSAIC_PX * aspect);
   const h = aspect >= 1 ? Math.round(MOSAIC_PX / aspect) : MOSAIC_PX;
@@ -113,8 +113,8 @@ function mosaic({ photos, picture, seed }) {
   const g = c.getContext('2d');
   g.imageSmoothingQuality = 'high';
   for (const cell of plan.cells) {
-    const x0 = Math.round((cell.col * w) / cols), x1 = Math.round(((cell.col + 1) * w) / cols);
-    const y0 = Math.round((cell.row * h) / rows), y1 = Math.round(((cell.row + 1) * h) / rows);
+    const x0 = Math.round((cell.col * w) / cols), x1 = Math.round(((cell.col + cell.size) * w) / cols);
+    const y0 = Math.round((cell.row * h) / rows), y1 = Math.round(((cell.row + cell.size) * h) / rows);
     g.globalAlpha = 1;
     g.drawImage(imgs.get(cell.tileId), x0, y0, x1 - x0, y1 - y0);
     g.globalAlpha = cell.tint.alpha;

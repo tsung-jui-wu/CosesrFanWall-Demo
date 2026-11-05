@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  rgbToLab, tileFeature, targetCells, chooseGrid, planMosaic, mulberry32, featureDistance,
+  rgbToLab, tileFeature, targetCells, chooseGrid, chooseLayout, planMosaic, mulberry32, featureDistance,
 } from '../public/js/mosaic.js';
 
 const RED = [220, 30, 40], BLUE = [30, 60, 200];
@@ -225,4 +225,92 @@ test('the fly-in finds the subject on a gradient background', () => {
   const early = plan.order.slice(0, disc.size);
   const hit = early.filter((i) => disc.has(i)).length / early.length;
   assert.ok(hit > 0.75, `the first ${early.length} tiles are ${Math.round(hit * 100)}% disc, not the dark or light bands`);
+});
+
+// ---------- mixed cell sizes ----------
+function setupMixed(n, { aspect = 1.5, seed = 42 } = {}) {
+  const { cols, rows, cells } = chooseLayout(n, aspect);
+  const target = discTarget(cols, rows);
+  const tiles = randomTiles(n);
+  const plan = planMosaic({ cols, rows, cellFeatures: target.features, meanRGB: target.meanRGB, tiles, seed, opts: { cells } });
+  return { cols, rows, cells, target, tiles, plan };
+}
+
+test('chooseLayout: an even grid, about as many cells as the uniform grid, no tile over a sixth', () => {
+  for (const aspect of [0.5, 0.67, 1, 1.5, 16 / 9, 3]) {
+    for (const n of [1, 5, 30, 60, 117, 300, 1000, 5000]) {
+      const { cols, rows, cells } = chooseLayout(n, aspect);
+      const g = chooseGrid(n, aspect);
+      const where = `n=${n} aspect=${aspect.toFixed(2)}`;
+      assert.ok(cols % 2 === 0 && rows % 2 === 0, where);
+      assert.ok(cols / 2 >= 6 && rows / 2 >= 6, `${where}: big cells are at most a sixth`);
+      assert.ok(cells >= (cols * rows) / 4 && cells <= cols * rows, where);
+      assert.ok(Math.abs(cells - g.cols * g.rows) <= (cols * rows) / 4, `${where}: ${cells} cells vs ${g.cols * g.rows}`);
+      assert.ok(Math.abs(cols / rows - aspect) / aspect < 0.25, `${where}: ${cols}x${rows}`);
+    }
+  }
+});
+
+test('mixed cells cover every grid unit exactly once, in two sizes, and every cell gets a tile', () => {
+  for (const n of [1, 5, 30, 117, 600]) {
+    const { plan, cols, rows, cells, tiles } = setupMixed(n);
+    const seen = new Uint8Array(cols * rows);
+    plan.cells.forEach((c, i) => {
+      assert.ok(c.size === 1 || c.size === 2, `n=${n}: size ${c.size}`);
+      if (c.size === 2) assert.ok(c.col % 2 === 0 && c.row % 2 === 0, 'big cells sit on the 2x2 blocks');
+      for (let y = 0; y < c.size; y++) for (let x = 0; x < c.size; x++) {
+        const u = (c.row + y) * cols + c.col + x;
+        seen[u]++;
+        assert.equal(plan.grid[u], i, 'grid points at the cell over the unit');
+      }
+    });
+    assert.ok(seen.every((v) => v === 1), `n=${n}: every unit covered once`);
+    assert.ok(Math.abs(plan.cells.length - cells) <= 3, `n=${n}: ${plan.cells.length} cells, wanted ~${cells}`);
+    assert.ok(plan.cells.some((c) => c.size === 2) && plan.cells.some((c) => c.size === 1), `n=${n}: both sizes`);
+    assert.ok(plan.cells.every((c) => c.tileId !== null), `n=${n}: no ghost cells`);
+    const counts = {};
+    for (const c of plan.cells) counts[c.tileId] = (counts[c.tileId] ?? 0) + 1;
+    assert.ok(Object.values(counts).every((k) => k <= plan.maxReuse));
+    if (n <= 30) assert.equal(Object.keys(counts).length, tiles.length, `n=${n}: every photo used`);
+    assert.equal(plan.order.length, plan.cells.length);
+  }
+});
+
+test('mixed cells: small cells go where the picture has detail, big ones where it is flat', () => {
+  const { plan, cols, target } = setupMixed(117);
+  // A 2x2 block is flat when all 16 of its quadrant colors are the same (all disc or all background).
+  const flat = (bx, by) => {
+    const f = target.features, u0 = (by * 2) * cols + bx * 2;
+    for (const u of [u0, u0 + 1, u0 + cols, u0 + cols + 1]) {
+      for (let q = 0; q < 12; q++) if (Math.abs(f[u * 12 + q] - f[u0 * 12 + q % 3]) > 1e-3) return false;
+    }
+    return true;
+  };
+  const small = plan.cells.filter((c) => c.size === 1), big = plan.cells.filter((c) => c.size === 2);
+  const smallFlat = small.filter((c) => flat(c.col >> 1, c.row >> 1)).length;
+  const bigEdge = big.filter((c) => !flat(c.col >> 1, c.row >> 1)).length;
+  assert.ok(small.length > 0);
+  // Splits go to the disc's edge first: flat blocks are split only once no edge block is left whole.
+  assert.ok(smallFlat === 0 || bigEdge === 0, `${smallFlat} small cells on flat blocks while ${bigEdge} edge blocks stay big`);
+});
+
+test('mixed cells: the same seed gives the same plan, and the fly-in still starts on the subject', () => {
+  const a = setupMixed(117).plan, b = setupMixed(117).plan;
+  assert.deepEqual(a.cells, b.cells);
+  assert.deepEqual(a.order, b.order);
+  const { plan, target } = setupMixed(60);
+  const inDisc = (c) => target.isDisc(c.col, c.row) && target.isDisc(c.col + c.size - 1, c.row + c.size - 1);
+  const disc = plan.order.filter((i) => inDisc(plan.cells[i]));
+  const early = plan.order.slice(0, disc.length);
+  const hit = early.filter((i) => inDisc(plan.cells[i])).length / early.length;
+  assert.ok(disc.length > 0 && hit > 0.75, `the first ${early.length} tiles are ${Math.round(hit * 100)}% disc`);
+});
+
+test('without opts.cells every grid unit is one cell, in row-major order', () => {
+  const { plan } = setup(117);
+  plan.cells.forEach((c, i) => {
+    assert.equal(c.size, 1);
+    assert.equal(c.row * plan.cols + c.col, i);
+    assert.equal(plan.grid[i], i);
+  });
 });
