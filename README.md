@@ -69,7 +69,7 @@ The cosplayer can hide or delete any item, or wipe their whole page. Before thei
 
 **Local-first year in review.** Anything that outlasts the deletion window lives on the cosplayer's own device, never on the server. At `/review`, a cosplayer picks the ZIPs they saved during the year and gets one page per event, grouped by year. The files are read inside the browser; nothing is uploaded, and the page holds no data of its own. On their reveal page, "Add reminders to my calendar" gives them a calendar file (made on the device, no email) with a reminder to download before the page is deleted and one in December for the year in review.
 
-**What the cosplayer may post.** The image from **Save image** shows fans' photos only as small tiles, with no notes or names. The consent text tells fans that the cosplayer may post it.
+**What the cosplayer may post.** The image from **Save** (a still image or an animated GIF of it coming together) shows fans' photos only as small tiles, with no notes or names. The consent text tells fans that the cosplayer may post it.
 
 ## Rebuild the static demo
 

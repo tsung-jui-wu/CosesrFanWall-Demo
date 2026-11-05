@@ -37,7 +37,13 @@
     <button type="button" id="skip" data-i18n="reveal.controls.skip"></button>
     <button type="button" id="reset-zoom" hidden data-i18n="reveal.controls.resetZoom"></button>
     <button type="button" id="replay" data-i18n="reveal.controls.replay"></button>
-    <button type="button" class="primary" id="export" hidden data-i18n="reveal.controls.saveImage"></button>
+    <div class="save-menu" id="save-menu" hidden>
+      <button type="button" class="primary" id="save-toggle" aria-expanded="false" aria-controls="save-options" data-i18n="reveal.controls.save"></button>
+      <div class="save-options" id="save-options" hidden>
+        <button type="button" id="export" data-i18n="reveal.save.image"></button>
+        <button type="button" id="export-gif" data-i18n="reveal.save.gif"></button>
+      </div>
+    </div>
     <button type="button" id="manage-open" data-i18n="reveal.controls.manage"></button>
   </nav>
   <p id="zoom-hint" class="zoom-hint" hidden></p>

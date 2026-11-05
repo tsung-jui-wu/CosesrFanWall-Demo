@@ -437,6 +437,19 @@ body.reveal { overflow: hidden; height: 100vh; height: 100dvh; }
 .controls button { min-height: 46px; padding: 0 14px; background: var(--surface-1); }
 .controls button:hover { background: var(--surface-2); }
 .controls button.primary { background: #ffffff; color: #000000; }
+/* Save: image or GIF, in a small menu that opens upward from the button bar. */
+.save-menu { position: relative; }
+#save-toggle::after { content: ""; display: inline-block; margin-left: 8px; vertical-align: 2px; border: 5px solid transparent; border-top-color: currentColor; border-bottom-width: 0; }
+#save-toggle[aria-expanded="true"]::after { border-top-width: 0; border-bottom: 5px solid currentColor; }
+.save-options {
+  position: absolute; bottom: calc(100% + 8px); left: 50%; transform: translateX(-50%); z-index: 3;
+  display: flex; flex-direction: column; gap: 4px; min-width: 200px; padding: 6px; border-radius: 15px;
+  background: var(--surface-1); box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5);
+}
+.save-options[hidden] { display: none; }
+.save-options button { justify-content: flex-start; text-align: left; white-space: nowrap; background: transparent; }
+.save-options button:hover, .save-options button:focus-visible { background: var(--surface-2); }
+.save-options button:disabled { opacity: 0.75; cursor: progress; }
 .reveal #stage.zoomable { touch-action: none; cursor: zoom-in; }
 .reveal #status { bottom: calc(80px + env(safe-area-inset-bottom)); }
 button.link { background: none; color: var(--muted); text-decoration: underline; padding: 4px; min-height: 0; }
