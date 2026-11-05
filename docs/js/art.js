@@ -5,6 +5,11 @@ import { PRINT_RATIO, PRINT_PHOTO } from './polaroid.js';
 
 export const makeCanvas = (w, h) => Object.assign(document.createElement('canvas'), { width: w, height: h });
 
+// When prints are pinned up or stars light up, in ms, on the stage and in Save GIF: piece i arrives
+// over `piece` ms from t0 + delay * spread.
+export const ARRIVE = { t0: 400, wall: 3200, sky: 3800, piece: 700 };
+export const easeOut = (p) => 1 - (1 - p) ** 3;
+
 // Step-down halving through two reusable scratch canvases, so big reductions average pixels
 // instead of aliasing (and we don't allocate a canvas per step per tile). Synchronous: callers that
 // await between calls must not rely on the scratch canvases in between.

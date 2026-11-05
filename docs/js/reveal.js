@@ -4,12 +4,13 @@
 // skip, replay, and resize need no extra state.
 import { api, el, toast, loadBitmap, STATIC, segmentAfter, downloadBlob, saveOrShare } from './api.js';
 import { makeIcs, nextDecember } from './ics.js';
-import { tileFeature, targetCells, chooseGrid, planMosaic, mulberry32, hashSeed } from './mosaic.js';
+import { tileFeature, targetCells, chooseLayout, planMosaic, mulberry32, hashSeed } from './mosaic.js';
 import { planWall, PRINT_RATIO } from './polaroid.js';
 import { planSky } from './constellation.js';
-import { styleOf, pickPool, cycleItem } from './styles.js';
-import { makeCanvas, shrinkInto, coverCrop, drawPiece, paintWall, printPiece, paintSky, paintDust, paintLink, starPiece } from './art.js';
-import { renderPicture } from './render.js';
+import { styleOf, pickPool, cycleItem, EXPORT, EXPORT_MAX_PHOTO } from './styles.js';
+import { makeCanvas, shrinkInto, coverCrop, drawPiece, paintWall, printPiece, paintSky, paintDust, paintLink, starPiece, ARRIVE, easeOut } from './art.js';
+import { renderPicture, animatePicture } from './render.js';
+import { GifEncoder, buildPalette } from './gif.js';
 import { renderEdited, photoBlob, openEditor } from './editor.js';
 import { t, lang, setText, setTitle, formatDate, onLangChange, useEventLang } from './i18n.js';
 
@@ -36,11 +37,10 @@ const FLIGHT_MS = 1000;
 const TINT_MS = 500;
 const ENTER_MS = 1600;
 const CYCLE_MS = 4500; // a note slot moves on to the next note
-const PIECE_MS = 700; // a print or a star arriving
+const PIECE_MS = ARRIVE.piece; // a print or a star arriving
 const PIECE_CYCLE_MS = 2600; // a print or a star moves on to the next photo
 
 const clamp = (v, lo, hi) => Math.min(hi, Math.max(lo, v));
-const easeOut = (p) => 1 - (1 - p) ** 3;
 
 let data = null;
 let scene = null; // built once by prepare()
@@ -105,9 +105,10 @@ async function prepare(onProgress) {
   if (!photos.length) return float(); // only notes: nothing to assemble or pin up, and nothing to save
   if (style !== 'mosaic' || !base) return prepareArt(style === 'constellation' ? 'sky' : 'wall', photos, notes, tick, onProgress);
 
-  // Target: the base image at (2*cols) x (2*rows), one pixel per cell quadrant.
+  // Target: the base image at (2*cols) x (2*rows), one pixel per grid unit quadrant. A cell is one
+  // unit, or 2x2 units where the picture is flat (chooseLayout).
   const aspect = base.width / base.height;
-  const { cols, rows } = chooseGrid(photos.length, aspect);
+  const { cols, rows, cells } = chooseLayout(photos.length, aspect);
   const target = makeCanvas(cols * 2, rows * 2);
   const tctx = target.getContext('2d', { willReadFrequently: true });
   shrinkInto(target, base, 0, 0, base.width, base.height, cols * 2, rows * 2);
@@ -137,7 +138,7 @@ async function prepare(onProgress) {
   })).filter(Boolean);
   if (!tiles.length) return float(); // none of the photos would load
 
-  const plan = planMosaic({ cols, rows, cellFeatures: features, meanRGB, tiles, seed });
+  const plan = planMosaic({ cols, rows, cellFeatures: features, meanRGB, tiles, seed, opts: { cells } });
   // Photos the plan didn't use float with the notes.
   const leftover = new Set(plan.leftover);
   const extras = await floatPhotos(tiles.filter((t) => leftover.has(t.id)).map((t) => t.item));
@@ -179,13 +180,13 @@ function buildScene(s) {
   s.floaterRot = s.floaters.map(() => (rng() - 0.5) * 0.16);
   if (s.mode === 'wall' || s.mode === 'sky') {
     // Prints are pinned up, or stars light up, over `spread` ms; then the notes arrive.
-    s.t0 = 400;
-    s.spread = s.mode === 'wall' ? 3200 : 3800;
+    s.t0 = ARRIVE.t0;
+    s.spread = s.mode === 'wall' ? ARRIVE.wall : ARRIVE.sky;
     s.tilesEnd = s.t0 + s.spread + PIECE_MS;
     s.floatStart = s.tilesEnd - 600;
     s.floatSpan = null;
   } else if (s.mode === 'mosaic') {
-    const N = s.cols * s.rows;
+    const N = s.plan.cells.length;
     s.start = new Float64Array(N);
     s.fly = new Float32Array(N * 4); // start x, start y (0..1 of stage), rotation, scale
     s.tint = new Array(N);
@@ -461,18 +462,18 @@ function slotContent(k, t) {
 const pieceTurn = (k, t, K) => turn(k, t - (L.end + 1500), K, scene.pics.length, PIECE_CYCLE_MS, 900);
 
 // ---------- drawing ----------
-function cellBox(i) {
-  const { rect } = L;
-  const col = i % scene.cols, row = Math.floor(i / scene.cols);
-  const cw = rect.w / scene.cols, ch = rect.h / scene.rows;
-  // Round edges, not sizes, so neighboring cells meet without seams.
-  const x0 = Math.round(rect.x + col * cw), x1 = Math.round(rect.x + (col + 1) * cw);
-  const y0 = Math.round(rect.y + row * ch), y1 = Math.round(rect.y + (row + 1) * ch);
+// Cell i's box in rect: x, y, w, h. Edges are rounded, not sizes, so neighboring cells meet without seams.
+function cellBox(i, rect = L.rect) {
+  return boxOf(scene.plan.cells[i], rect.x, rect.y, rect.w / scene.cols, rect.h / scene.rows);
+}
+function boxOf({ col, row, size }, x, y, cw, ch) {
+  const x0 = Math.round(x + col * cw), x1 = Math.round(x + (col + size) * cw);
+  const y0 = Math.round(y + row * ch), y1 = Math.round(y + (row + size) * ch);
   return [x0, y0, x1 - x0, y1 - y0];
 }
 
-function drawLandedCell(g, i, tintAlpha) {
-  const [x, y, w, h] = cellBox(i);
+function drawLandedCell(g, i, tintAlpha, rect = L.rect) {
+  const [x, y, w, h] = cellBox(i, rect);
   g.globalAlpha = 1;
   g.drawImage(scene.imgs.get(scene.plan.cells[i].tileId), x, y, w, h);
   const a = scene.plan.cells[i].tint.alpha * tintAlpha;
@@ -505,35 +506,40 @@ function drawMosaic(t) {
     ctx.drawImage(finalCache, 0, 0);
     return;
   }
-  const { rect, W, H } = L;
+  paintAssembly(ctx, t, L.rect, L.W, L.H, L.baseScaled, clipMosaic);
+}
+
+// The mosaic at time t, assembling in `rect` on a W x H canvas: the stage, or a Save GIF frame. In a
+// GIF, a tile in flight is never drawn bigger than a saved image allows (maxTile, as a share of W).
+function paintAssembly(g, t, rect, W, H, base, clip = null, maxTile = Infinity) {
   // Show the whole picture first, then fade it back to a ghost as the photos arrive.
   const ghost = t < 600 ? (t / 600) * 0.85 : t < 1600 ? 0.85 + (GHOST_ALPHA - 0.85) * ((t - 600) / 1000) : GHOST_ALPHA;
-  ctx.save();
-  clipMosaic(ctx);
-  ctx.globalAlpha = ghost;
-  ctx.drawImage(L.baseScaled, rect.x, rect.y, rect.w, rect.h);
+  g.save();
+  clip?.(g);
+  g.globalAlpha = ghost;
+  g.drawImage(base, rect.x, rect.y, rect.w, rect.h);
 
   const flying = [];
   for (const i of scene.plan.order) {
     const s = scene.start[i];
     if (t < s) break; // order is sorted by delay, so nothing later has started either
     const p = (t - s) / FLIGHT_MS;
-    if (p >= 1) drawLandedCell(ctx, i, clamp((t - s - FLIGHT_MS) / TINT_MS, 0, 1));
+    if (p >= 1) drawLandedCell(g, i, clamp((t - s - FLIGHT_MS) / TINT_MS, 0, 1), rect);
     else flying.push(i, p);
   }
-  ctx.restore(); // tiles in flight aren't clipped
+  g.restore(); // tiles in flight aren't clipped
   for (let k = 0; k < flying.length; k += 2) {
     const i = flying[k], p = flying[k + 1], e = easeOut(p);
-    const [x, y, w, h] = cellBox(i);
+    const [x, y, w, h] = cellBox(i, rect);
     const [sx, sy, rot, scale] = scene.fly.subarray(i * 4, i * 4 + 4);
     const px = sx * W + (x + w / 2 - sx * W) * e, py = sy * H + (y + h / 2 - sy * H) * e;
-    const s = scale + (1 - scale) * e, r = rot * (1 - e);
-    ctx.globalAlpha = clamp(p * 4, 0, 1);
-    ctx.setTransform(Math.cos(r), Math.sin(r), -Math.sin(r), Math.cos(r), px, py);
-    ctx.drawImage(scene.imgs.get(scene.plan.cells[i].tileId), (-w * s) / 2, (-h * s) / 2, w * s, h * s);
+    const s = Math.min(scale + (1 - scale) * e, (maxTile * W) / Math.max(w, h)), r = rot * (1 - e);
+    g.globalAlpha = clamp(p * 4, 0, 1);
+    g.setTransform(Math.cos(r), Math.sin(r), -Math.sin(r), Math.cos(r), px, py);
+    g.drawImage(scene.imgs.get(scene.plan.cells[i].tileId), (-w * s) / 2, (-h * s) / 2, w * s, h * s);
   }
-  ctx.setTransform(1, 0, 0, 1, 0, 0);
-  ctx.globalAlpha = 1;
+  g.setTransform(1, 0, 0, 1, 0, 0);
+  g.globalAlpha = 1;
 }
 
 function drawBackdrop(t) {
@@ -666,16 +672,11 @@ function drawZoomed() {
   ctx.drawImage(scene.base, rect.x, rect.y, rect.w, rect.h); // full resolution, not the screen-sized copy
   // Only the cells on screen.
   const cw = rect.w / scene.cols, ch = rect.h / scene.rows;
-  const c0 = clamp(Math.floor((-view.x / view.s - rect.x) / cw), 0, scene.cols - 1);
-  const c1 = clamp(Math.floor(((W - view.x) / view.s - rect.x) / cw), 0, scene.cols - 1);
-  const r0 = clamp(Math.floor((-view.y / view.s - rect.y) / ch), 0, scene.rows - 1);
-  const r1 = clamp(Math.floor(((H - view.y) / view.s - rect.y) / ch), 0, scene.rows - 1);
-  for (let row = r0; row <= r1; row++) {
-    for (let col = c0; col <= c1; col++) {
-      const i = row * scene.cols + col;
-      if (scene.plan.cells[i].tileId !== null) drawLandedCell(ctx, i, 1);
-    }
-  }
+  const c0 = Math.floor((-view.x / view.s - rect.x) / cw), c1 = Math.floor(((W - view.x) / view.s - rect.x) / cw);
+  const r0 = Math.floor((-view.y / view.s - rect.y) / ch), r1 = Math.floor(((H - view.y) / view.s - rect.y) / ch);
+  scene.plan.cells.forEach((c, i) => {
+    if (c.tileId !== null && c.col <= c1 && c.col + c.size > c0 && c.row <= r1 && c.row + c.size > r0) drawLandedCell(ctx, i, 1);
+  });
   ctx.setTransform(1, 0, 0, 1, 0, 0);
   ctx.globalAlpha = 1;
 }
@@ -714,7 +715,7 @@ function itemAt(px, py) {
   const x = (px - view.x) / view.s, y = (py - view.y) / view.s;
   if (x < rect.x || y < rect.y || x >= rect.x + rect.w || y >= rect.y + rect.h) return null;
   const col = Math.floor(((x - rect.x) / rect.w) * scene.cols), row = Math.floor(((y - rect.y) / rect.h) * scene.rows);
-  const id = scene.plan.cells[row * scene.cols + col]?.tileId;
+  const id = scene.plan.cells[scene.plan.grid[row * scene.cols + col]]?.tileId;
   return id ? data.items.find((i) => i.id === id) : null;
 }
 
@@ -966,13 +967,12 @@ function renderExport() {
   g.drawImage(s.base, 0, 0, w, h);
   for (const i of s.plan.order) {
     const cell = s.plan.cells[i];
-    const x0 = Math.round((cell.col * w) / s.cols), x1 = Math.round(((cell.col + 1) * w) / s.cols);
-    const y0 = Math.round((cell.row * h) / s.rows), y1 = Math.round(((cell.row + 1) * h) / s.rows);
+    const [x, y, cw, ch] = boxOf(cell, 0, 0, w / s.cols, h / s.rows);
     g.globalAlpha = 1;
-    g.drawImage(s.imgs.get(cell.tileId), x0, y0, x1 - x0, y1 - y0);
+    g.drawImage(s.imgs.get(cell.tileId), x, y, cw, ch);
     g.globalAlpha = cell.tint.alpha;
     g.fillStyle = s.tint[i];
-    g.fillRect(x0, y0, x1 - x0, y1 - y0);
+    g.fillRect(x, y, cw, ch);
   }
   return toJpeg(c);
 }
@@ -991,12 +991,13 @@ function queueExport() {
     if (scene === s) makeExport().catch(() => { if (exportScene === s) exportPromise = null; });
   }, 1500);
 }
-const resetExport = () => { exportBlob = null; exportPromise = null; exportScene = null; };
+const resetExport = () => { exportBlob = null; exportPromise = null; exportScene = null; gifBlob = null; gifScene = null; };
 
 const fileSlug = (s) => s.normalize('NFKD').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'mosaic';
 
 $('export').addEventListener('click', async () => {
   const button = $('export');
+  closeSaveMenu();
   button.disabled = true;
   try {
     const blob = (exportScene === scene && exportBlob) || (await makeExport());
@@ -1007,6 +1008,113 @@ $('export').addEventListener('click', async () => {
   } finally {
     button.disabled = false;
   }
+});
+
+// Save GIF: the picture coming together, then holding. The same rule as the image: the picture only,
+// never notes or names, and no photo bigger than EXPORT_MAX_PHOTO of the width (tiles in flight are
+// held to it; prints and stars only grow into place). The timeline is squeezed into GIF_MAX_MS so the
+// loop stays short enough to post. Made on request, not ahead: it takes a few seconds and a lot more
+// work than the image.
+const GIF_PX = 640; // the long side
+const GIF_FRAME_CS = 8; // hundredths of a second per frame (12.5 fps)
+const GIF_HOLD_CS = 300; // the finished picture, before the loop starts again
+const GIF_MAX_MS = 6000;
+let gifBlob = null, gifScene = null, gifBusy = false;
+
+function gifAnimation() {
+  const s = scene;
+  if (s.mode === 'mosaic') {
+    const w = s.aspect >= 1 ? GIF_PX : Math.round(GIF_PX * s.aspect);
+    const h = s.aspect >= 1 ? Math.round(GIF_PX / s.aspect) : GIF_PX;
+    const base = makeCanvas(w, h);
+    shrinkInto(base, s.base, 0, 0, s.base.width, s.base.height, w, h);
+    const rect = { x: 0, y: 0, w, h };
+    return {
+      w, h, from: 600, end: s.tilesEnd, // from the picture showing, so the first frame isn't blank
+      draw(g, t) {
+        g.fillStyle = BG;
+        g.fillRect(0, 0, w, h);
+        paintAssembly(g, t, rect, w, h, base, null, EXPORT_MAX_PHOTO);
+      },
+    };
+  }
+  const h = GIF_PX, w = Math.round((GIF_PX * EXPORT.width) / EXPORT.height); // 4:5, as the image
+  const art = animatePicture(s.mode === 'sky' ? 'constellation' : 'polaroid', { photos: s.pics.map((p) => p.img), seed }, w, h);
+  return { w, h, from: ARRIVE.t0 + ARRIVE.piece, end: art.end, draw: art.draw }; // from the first piece in place
+}
+
+async function renderGif(onProgress) {
+  const s = scene;
+  const a = gifAnimation();
+  const c = makeCanvas(a.w, a.h);
+  const g = c.getContext('2d', { willReadFrequently: true });
+  g.imageSmoothingQuality = 'high';
+  const span = a.end - a.from;
+  const n = Math.max(2, Math.round(Math.min(span, GIF_MAX_MS) / (GIF_FRAME_CS * 10)) + 1);
+  const pixels = (k) => { a.draw(g, a.from + (span * k) / (n - 1)); return g.getImageData(0, 0, a.w, a.h).data; };
+  // One palette for the whole loop, from frames across it (so pieces fading in get their in-between
+  // colors too, not only the finished picture's).
+  const samples = Array.from({ length: 8 }, (_, i) => pixels(Math.round((i * (n - 1)) / 7)));
+  const gif = new GifEncoder(a.w, a.h, buildPalette(samples));
+  for (let k = 0; k < n; k++) {
+    if (scene !== s) throw new Error('the scene was rebuilt');
+    gif.addFrame(pixels(k), k === n - 1 ? GIF_HOLD_CS : GIF_FRAME_CS);
+    onProgress((k + 1) / n);
+    await new Promise((r) => setTimeout(r)); // let the page breathe between frames
+  }
+  return new Blob([gif.finish()], { type: 'image/gif' });
+}
+
+$('export-gif').addEventListener('click', async () => {
+  if (gifBusy) return;
+  const button = $('export-gif');
+  const name = `fanwall-${fileSlug(data.cosplayer.name)}.gif`, title = t('reveal.thankYou', { name: data.cosplayer.name });
+  if (gifScene === scene && gifBlob) {
+    closeSaveMenu();
+    await saveOrShare(gifBlob, name, title);
+    return;
+  }
+  gifBusy = true;
+  button.disabled = true;
+  const s = scene;
+  try {
+    const blob = await renderGif((p) => setText(button, 'reveal.save.gifMaking', { pct: Math.round(p * 100) }));
+    gifBlob = blob; gifScene = s;
+    // Phones only open the share sheet right after a tap. When that moment has passed, keep the file
+    // and ask for one more tap.
+    if (navigator.userActivation && !navigator.userActivation.isActive && matchMedia('(pointer: coarse)').matches) {
+      toast(t('reveal.toast.gifReady'));
+    } else {
+      closeSaveMenu();
+      await saveOrShare(blob, name, title);
+    }
+  } catch (err) {
+    console.error(err);
+    toast(t('reveal.toast.gifFailed'), { error: true });
+  } finally {
+    gifBusy = false;
+    button.disabled = false;
+    setText(button, 'reveal.save.gif');
+  }
+});
+
+// Save: a small menu above the button, with the image and the GIF.
+function closeSaveMenu() {
+  $('save-options').hidden = true;
+  $('save-toggle').setAttribute('aria-expanded', 'false');
+}
+$('save-toggle').addEventListener('click', () => {
+  const open = $('save-options').hidden;
+  $('save-options').hidden = !open;
+  $('save-toggle').setAttribute('aria-expanded', String(open));
+  if (open) $('export').focus();
+});
+document.addEventListener('click', (e) => { if (!e.target.closest('#save-menu')) closeSaveMenu(); });
+$('save-menu').addEventListener('keydown', (e) => {
+  if (e.key !== 'Escape' || $('save-options').hidden) return;
+  e.stopPropagation();
+  closeSaveMenu();
+  $('save-toggle').focus();
 });
 
 // ---------- manage ----------
@@ -1287,7 +1395,8 @@ async function showReady() {
     scene = next;
     computeLayout();
     freeScene(old);
-    $('export').hidden = !canSave();
+    $('save-menu').hidden = !canSave();
+    closeSaveMenu();
     canvas.setAttribute('data-i18n-aria-label', `reveal.stage.${styleOf(data.event)}`);
     canvas.setAttribute('aria-label', t(`reveal.stage.${styleOf(data.event)}`));
     if (running) { play({ fromEnd: true }); toast(t('reveal.toast.updated')); }
