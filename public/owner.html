@@ -1,0 +1,63 @@
+<!doctype html>
+<html lang="en" class="i18n-pending">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="robots" content="noindex">
+  <title data-i18n="owner.docTitle"></title>
+  <link rel="icon" href="/favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="/css/app.css">
+</head>
+<body class="owner">
+  <main>
+    <header class="topbar">
+      <span class="wordmark">FanWall<span class="muted" data-i18n="owner.wordmark"></span></span>
+      <div class="topbar-end">
+        <div class="lang-switch" data-lang-switch></div>
+        <button type="button" id="lock" data-i18n="owner.signOut" hidden></button>
+      </div>
+    </header>
+
+    <section class="panel" id="login" aria-labelledby="login-h">
+      <h2 id="login-h" data-i18n="owner.login.heading"></h2>
+      <form id="login-form">
+        <div class="field">
+          <label for="owner-key" data-i18n="owner.login.key"></label>
+          <input id="owner-key" type="password" autocomplete="current-password" required>
+          <p class="small muted" data-i18n="owner.login.note"></p>
+        </div>
+        <button class="primary" type="submit" data-i18n="owner.login.submit"></button>
+      </form>
+    </section>
+
+    <div id="owner-body" hidden>
+      <section class="panel" aria-labelledby="invites-h">
+        <h2 id="invites-h" data-i18n="owner.invites.heading"></h2>
+        <p class="muted" data-i18n="owner.invites.intro"></p>
+        <form id="invite-form">
+          <div class="field">
+            <label for="invite-label" data-i18n="field.inviteLabel"></label>
+            <input id="invite-label" type="text" maxlength="80" required autocomplete="off">
+            <p class="small muted" data-i18n="owner.invites.labelNote"></p>
+          </div>
+          <button class="primary" type="submit" data-i18n="owner.invites.create"></button>
+        </form>
+        <div class="notice" id="new-code" hidden>
+          <strong id="new-code-title"></strong>
+          <div class="code" id="new-code-value"></div>
+          <p class="small" data-i18n="owner.invites.newNote"></p>
+          <button type="button" id="copy-code" data-i18n="owner.invites.copy"></button>
+        </div>
+        <ul class="mine-list" id="invites"></ul>
+      </section>
+
+      <section class="panel" aria-labelledby="events-h">
+        <h2 id="events-h" data-i18n="owner.events.heading"></h2>
+        <ul class="mine-list" id="events"></ul>
+      </section>
+    </div>
+  </main>
+  <div id="status" role="status" aria-live="polite"></div>
+  <script type="module" src="/js/owner.js"></script>
+</body>
+</html>

@@ -8,6 +8,7 @@ import sharp from 'sharp';
 const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'fanwall-api-'));
 process.env.DATA_DIR = dir;
 process.env.CREATE_KEY = 'letmein';
+process.env.OWNER_KEY = 'owner-secret';
 process.env.TRUST_PROXY = '1'; // lets each test act as its own client via X-Forwarded-For
 const { app } = await import('../server.js');
 const { db, mediaPath, flush } = await import('../lib/store.js');
@@ -22,8 +23,8 @@ after(() => { server.close(); flush(); fs.rmSync(dir, { recursive: true, force: 
 
 const jpeg = (w = 64, h = 48) => sharp({ create: { width: w, height: h, channels: 3, background: '#3a6' } }).jpeg().toBuffer();
 
-async function call(p, { method = 'GET', json, form, ip } = {}) {
-  const headers = {};
+async function call(p, { method = 'GET', json, form, ip, headers: extra = {} } = {}) {
+  const headers = { ...extra };
   if (json) headers['content-type'] = 'application/json';
   if (ip) headers['x-forwarded-for'] = ip;
   const res = await fetch(base + p, {
@@ -904,4 +905,59 @@ test('favorites: private stars that survive hide and unhide, and a favorites-onl
   // A starred item that's hidden stays out of a favorites-only ZIP too.
   await item(f.ids.secretNote, { hidden: true });
   assert.deepEqual((await zip('?only=favorites')).manifest.items.map((i) => i.note), ['You were amazing']);
+});
+
+test('the owner key opens /api/owner, and invite codes let organizers create events', async () => {
+  const owner = (p, opts = {}) => call(`/api/owner${p}`, { ...opts, headers: { 'x-owner-key': 'owner-secret' } });
+  assert.equal((await call('/api/owner')).status, 403, 'no key');
+  assert.equal((await call('/api/owner', { headers: { 'x-owner-key': 'nope' } })).status, 403);
+  assert.equal((await call('/api/owner?key=owner-secret')).status, 403, 'the key only counts in the header');
+  assert.equal((await owner('/invites', { method: 'POST', json: { label: ' ' } })).status, 400);
+
+  const a = await owner('/invites', { method: 'POST', json: { label: 'Org A' } });
+  const b = await owner('/invites', { method: 'POST', json: { label: 'Org B' } });
+  assert.equal(a.status, 201);
+  assert.match(a.body.code, /^[2-9A-HJ-NP-Z]{4}-[2-9A-HJ-NP-Z]{4}-[2-9A-HJ-NP-Z]{4}$/);
+  // Only the hash is stored.
+  const stored = JSON.stringify(db.invites);
+  assert.ok(!stored.includes(a.body.code) && !stored.includes(a.body.code.replace(/-/g, '')));
+
+  // Each organizer's code makes their own event; lowercase and spaces are forgiven.
+  const make = (key, name) => call('/api/events', { method: 'POST', json: { name, key }, ip: freshIp() });
+  const evA = await make(a.body.code.toLowerCase().replace(/-/g, ' '), 'A Con');
+  const evB = await make(b.body.code, 'B Con');
+  assert.equal(evA.status, 201);
+  assert.equal(evB.status, 201);
+  assert.equal(db.events[evA.body.id].inviteId, a.body.id);
+  assert.equal((await make('owner-secret', 'Owner Con')).status, 201, 'the owner key works too');
+
+  // An organizer's link opens only their own event.
+  const tokenA = evA.body.adminPath.split('/')[2];
+  const viewA = await call(`/api/admin/${tokenA}`);
+  assert.equal(viewA.body.event.id, evA.body.id);
+  assert.ok(!JSON.stringify(viewA.body).includes('B Con'));
+  const cB = await call(`/api/admin/${evB.body.adminPath.split('/')[2]}/cosplayers`, { method: 'POST', json: { name: 'Bee' } });
+  assert.equal((await call(`/api/admin/${tokenA}/cosplayers/${cB.body.id}`, { method: 'DELETE' })).status, 404);
+
+  // The owner sees every event, with its dashboard link, and nothing secret about the codes.
+  const all = await owner('');
+  assert.equal(all.status, 200);
+  const rowA = all.body.events.find((e) => e.id === evA.body.id);
+  assert.equal(rowA.adminPath, evA.body.adminPath);
+  assert.equal(rowA.invite, 'Org A');
+  assert.ok(all.body.events.some((e) => e.id === evB.body.id));
+  assert.equal(all.body.invites.find((i) => i.id === a.body.id).events, 1);
+  assert.doesNotMatch(JSON.stringify(all.body), /codeHash|[2-9A-HJ-NP-Z]{4}-[2-9A-HJ-NP-Z]{4}-[2-9A-HJ-NP-Z]{4}/);
+
+  // A turned-off code makes no more events; the events it made keep working.
+  assert.equal((await owner(`/invites/${a.body.id}`, { method: 'DELETE' })).body.revoked, true);
+  assert.equal((await make(a.body.code, 'A Again')).status, 403);
+  assert.equal((await call(`/api/admin/${tokenA}`)).status, 200);
+  assert.equal((await owner('/invites/constructor', { method: 'DELETE' })).status, 404);
+
+  // The owner can delete an event and everything in it.
+  assert.equal((await owner(`/events/${evB.body.id}`, { method: 'DELETE' })).status, 200);
+  assert.equal(db.events[evB.body.id], undefined);
+  assert.equal(db.cosplayers[cB.body.id], undefined);
+  assert.equal((await owner(`/events/${evB.body.id}`, { method: 'DELETE' })).status, 404);
 });

@@ -8,7 +8,7 @@ import multer from 'multer';
 import QRCode from 'qrcode';
 import {
   db, save, newId, sha256, UPLOAD_DIR, MEDIA_NAME, mediaPath, getOwn, safeEqual, removeSubmission, removeCosplayer, optOutCosplayer,
-  purgeExpired, removeOrphanFiles, findEventByToken, findCosplayerByToken, HARD_CAP_DAYS, savedUntil,
+  purgeExpired, removeOrphanFiles, removeEvent, findEventByToken, findCosplayerByToken, HARD_CAP_DAYS, savedUntil,
 } from './lib/store.js';
 import { consentCopies, CONSENT_VERSION } from './lib/consent.js';
 import { planBundle } from './lib/bundle.js';
@@ -21,6 +21,10 @@ import { isStyle, styleOf, styleFor, DEFAULT_STYLE } from './public/js/styles.js
 const PORT = Number(process.env.PORT) || 3000;
 const PUBLIC_URL = (process.env.PUBLIC_URL || '').replace(/\/+$/, '');
 const CREATE_KEY = process.env.CREATE_KEY || '';
+// The site owner's key: opens /owner (every event, invite codes). When it is set, making an event
+// needs an invite code from the owner (or the owner key itself, or the older shared CREATE_KEY).
+const OWNER_KEY = process.env.OWNER_KEY || '';
+const MAX_INVITES = 500;
 const PUBLIC_DIR = path.join(path.dirname(fileURLToPath(import.meta.url)), 'public');
 
 const MAX_UPLOAD_BYTES = 12 * 1024 * 1024;
@@ -98,6 +102,7 @@ const submitLimit = rateLimit({ max: 15, windowMs: 10 * 60e3 });
 const deleteLimit = rateLimit({ max: 30, windowMs: 10 * 60e3 });
 const createLimit = rateLimit({ max: 10, windowMs: 60 * 60e3 });
 const downloadLimit = rateLimit({ max: 20, windowMs: 10 * 60e3 });
+const ownerLimit = rateLimit({ max: 60, windowMs: 10 * 60e3 });
 
 // ---------- helpers ----------
 // Delete codes: 12 chars from an unambiguous alphabet (~60 bits), shown as XXXX-XXXX-XXXX.
@@ -202,18 +207,36 @@ async function encodeOr400(fn, buffer) {
 app.use('/api', (req, res, next) => { res.set('Cache-Control', 'no-store'); next(); });
 app.use('/api', express.json({ limit: '64kb' }));
 
-app.get('/api/config', (req, res) => res.json({ needsKey: Boolean(CREATE_KEY) }));
+app.get('/api/config', (req, res) => res.json({ needsKey: Boolean(CREATE_KEY || OWNER_KEY) }));
+
+// Invite codes look like delete codes (XXXX-XXXX-XXXX) and are kept only as a SHA-256 hash.
+const findInvite = (key) => {
+  const code = normalizeCode(key);
+  if (!CODE_RE.test(code)) return undefined;
+  const hash = sha256(code);
+  return Object.values(db.invites).find((i) => !i.revoked && safeEqual(i.codeHash, hash));
+};
+
+// Which key let this event be made: { inviteId } for an invite code, {} for the owner or shared key.
+// Throws when a key is needed and this one isn't right.
+function createGrant(key) {
+  if (!CREATE_KEY && !OWNER_KEY) return {};
+  if (safeEqual(key, OWNER_KEY) || safeEqual(key, CREATE_KEY)) return {};
+  const invite = OWNER_KEY ? findInvite(key) : undefined;
+  if (!invite) throw new HttpError(403, 'bad_create_key');
+  return { inviteId: invite.id };
+}
 
 app.post('/api/events', createLimit, (req, res) => {
   const body = req.body ?? {};
-  if (CREATE_KEY && !safeEqual(body.key, CREATE_KEY)) throw new HttpError(403, 'bad_create_key');
+  const grant = createGrant(body.key);
   const name = textField(body.name, 'eventName', { max: MAX_TITLE, required: true });
   const retentionDays = retentionField(body.retentionDays) ?? 30;
   const id = newId();
   const organizerToken = newId(24);
   db.events[id] = {
     id, name, organizerToken, baseImage: null, open: true, closedAt: null, retentionDays, lang: null, style: DEFAULT_STYLE,
-    createdAt: Date.now(),
+    createdAt: Date.now(), inviteId: grant.inviteId ?? null,
   };
   save();
   res.status(201).json({ id, adminPath: `/admin/${organizerToken}` });
@@ -703,6 +726,65 @@ admin.post('/submissions/bulk', (req, res) => {
   res.json({ updated });
 });
 
+// ---------- API: site owner ----------
+// The key comes in a header, never the address, so it stays out of history and server logs.
+// Organizers only ever hold their own event's link; the owner can open any of them from here.
+const owner = express.Router();
+app.use('/api/owner', ownerLimit, (req, res, next) => {
+  if (!OWNER_KEY) throw new HttpError(404, 'owner_off');
+  if (!safeEqual(req.get('x-owner-key'), OWNER_KEY)) throw new HttpError(403, 'bad_owner_key');
+  next();
+}, owner);
+
+const inviteView = (i) => ({
+  id: i.id, label: i.label, createdAt: i.createdAt, revoked: Boolean(i.revoked),
+  events: Object.values(db.events).filter((e) => e.inviteId === i.id).length,
+});
+
+owner.get('/', (req, res) => {
+  const cosplayers = {}, pending = {};
+  for (const c of Object.values(db.cosplayers)) cosplayers[c.eventId] = (cosplayers[c.eventId] ?? 0) + 1;
+  for (const s of Object.values(db.submissions)) if (s.status === 'pending') pending[s.eventId] = (pending[s.eventId] ?? 0) + 1;
+  const events = Object.values(db.events)
+    .sort((a, b) => (b.createdAt ?? 0) - (a.createdAt ?? 0))
+    .map((e) => ({
+      id: e.id, name: e.name, open: e.open, createdAt: e.createdAt, closedAt: e.closedAt,
+      cosplayers: cosplayers[e.id] ?? 0, pending: pending[e.id] ?? 0,
+      invite: getOwn(db.invites, e.inviteId)?.label ?? null,
+      adminPath: `/admin/${e.organizerToken}`,
+    }));
+  const invites = Object.values(db.invites).sort((a, b) => b.createdAt - a.createdAt).map(inviteView);
+  res.json({ events, invites });
+});
+
+// The code is shown once, in this answer; only its hash is stored. The label is for the owner
+// (an organizer or event name). Don't put emails in it.
+owner.post('/invites', (req, res) => {
+  const label = textField(req.body?.label, 'inviteLabel', { max: MAX_TITLE, required: true });
+  if (Object.keys(db.invites).length >= MAX_INVITES) throw new HttpError(400, 'too_many_invites', { max: MAX_INVITES });
+  const code = newDeleteCode();
+  const id = newId();
+  db.invites[id] = { id, label, codeHash: sha256(normalizeCode(code)), createdAt: Date.now(), revoked: false };
+  save();
+  res.status(201).json({ ...inviteView(db.invites[id]), code });
+});
+
+// Revoking stops new events with that code. Events already made keep working.
+owner.delete('/invites/:id', (req, res) => {
+  const i = getOwn(db.invites, req.params.id);
+  if (!i) throw new HttpError(404, 'invite_not_found');
+  i.revoked = true;
+  save();
+  res.json(inviteView(i));
+});
+
+owner.delete('/events/:id', (req, res) => {
+  if (!getOwn(db.events, req.params.id)) throw new HttpError(404, 'event_not_found');
+  removeEvent(req.params.id);
+  save();
+  res.json({ ok: true });
+});
+
 app.use('/api', (req, res) => res.status(404).json({ error: 'not_found' }));
 
 // ---------- media ----------
@@ -738,6 +820,7 @@ app.get('/', page('index.html'));
 app.get('/review', page('review.html')); // the year in review: reads ZIPs on the device, holds no data
 app.get('/e/:eid/c/:cid', page('fan.html')); // the page itself explains bad or closed links
 app.get('/r/:token', page('reveal.html')); // the page shows "not ready" / "not valid" itself
+app.get('/owner', page('owner.html')); // asks for the owner key itself; holds no data
 app.get('/admin/:token', requireOrganizer, page('admin.html'));
 app.get('/admin/:token/print/:cid', requireOrganizer, page('print.html'));
 app.get('/admin/:token/preview/:cid', requireOrganizer, page('reveal.html')); // reveal.js sees the path

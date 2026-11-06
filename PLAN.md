@@ -34,7 +34,8 @@ Not started: Milestone 8 (README, accessibility pass, deploy).
 ```
 events[id]       { id, name, organizerToken, baseImage|null (file id), open, closedAt|null,
                    retentionDays (default 30), lang|null ('en' | 'zh-Hans' | 'zh-Hant': the pages' default),
-                   style ('mosaic' | 'polaroid' | 'constellation': the default for its cosplayers, default mosaic), createdAt }
+                   style ('mosaic' | 'polaroid' | 'constellation': the default for its cosplayers, default mosaic), createdAt,
+                   inviteId|null (the invite code it was made with) }
 cosplayers[id]   { id, eventId, name, character, revealToken, released, optOut,
                    baseImage|null (own mosaic image; falls back to the event's), baseAt|null,
                    style|null (own reveal style; null = the event's), createdAt }
@@ -43,6 +44,7 @@ submissions[id]  { id, eventId, cosplayerId, file|null (hex id; files are <id>.j
                    status 'pending'|'approved'|'rejected',
                    hidden (cosplayer hid it), favorite (cosplayer starred it; private to them), edit|null (cosplayer's photo edit, see "Photo editing"),
                    codeHash (sha256 of fan delete code), createdAt }
+invites[id]      { id, label (for the owner; no emails), codeHash (sha256 of the code, shown once), createdAt, revoked }
 ```
 
 Rules: never store IP addresses or emails. Delete codes are stored only as a hash. File ids are 128-bit random so URLs are unguessable.
@@ -59,13 +61,18 @@ Pages (static HTML, `Cache-Control: no-store` for token pages):
 | `/admin/:token/print/:cosplayerId` | printable QR sign |
 | `/admin/:token/preview/:cosplayerId` | the organizer's preview of that reveal page, view-only |
 | `/r/:revealToken` | cosplayer reveal and controls |
+| `/owner` | the site owner's page: asks for `OWNER_KEY` (kept in the tab's sessionStorage, sent as `X-Owner-Key`), then every event and the invite codes |
 | `/review` | the year in review: no data of its own, it reads the "Download all" ZIPs the cosplayer picks, on their device |
 
 API:
 
 | Method and path | Purpose |
 |---|---|
-| `POST /api/events` | create event `{name, retentionDays?, key?}` (optional `CREATE_KEY` env gate); returns admin path |
+| `POST /api/events` | create event `{name, retentionDays?, key?}`; returns admin path. When `OWNER_KEY` or `CREATE_KEY` is set, `key` must be an invite code that isn't turned off, the owner key, or the shared `CREATE_KEY` |
+| `GET /api/owner` | header `X-Owner-Key`. Every event (name, state, counts, invite label, admin path) and every invite (label, events made, revoked). 404 `owner_off` when `OWNER_KEY` isn't set |
+| `POST /api/owner/invites` | `{label}`; answers with the code, once (`XXXX-XXXX-XXXX`); only its hash is kept |
+| `DELETE /api/owner/invites/:id` | turn a code off: no new events with it; events it made keep working |
+| `DELETE /api/owner/events/:id` | delete an event and everything in it |
 | `GET /api/fan/:eid/:cid` | event name and default language, cosplayer name, consent copy in every language, open state |
 | `POST /api/fan/:eid/:cid/submit` | multipart: `photo?`, `message?` (max 280), `name?` (max 40), `credit`, `consent=1`, `consentLang`; needs photo or message; returns `{id, deleteCode}` |
 | `POST /api/fan/delete` | `{id, code}` fan self-delete |

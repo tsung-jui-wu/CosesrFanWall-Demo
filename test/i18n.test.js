@@ -32,7 +32,7 @@ test('every key the pages and scripts use exists', () => {
     'scripts/export-static.js',
     'lib/bundle.js',
   ];
-  const NS = 'common|lang|offline|copy|status|field|error|landing|fan|reveal|editor|admin|print|demo|zip';
+  const NS = 'common|lang|offline|copy|status|field|error|landing|fan|reveal|editor|admin|print|demo|zip|owner';
   const re = new RegExp(`(?:data-i18n(?:-[a-z-]+)?="|data-lang-label="|['"])((?:${NS})\\.[A-Za-z0-9_.]+)["']`, 'g');
   let found = 0;
   for (const f of files) {

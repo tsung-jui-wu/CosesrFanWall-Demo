@@ -39,11 +39,12 @@ async function staticApi(path, method, json) {
   return hit[2](json ?? {});
 }
 
-export async function api(path, { method = 'GET', json, form } = {}) {
+// headers: extra request headers, such as the owner key on /owner (kept out of the address).
+export async function api(path, { method = 'GET', json, form, headers = {} } = {}) {
   if (STATIC) return staticApi(path, method, json);
   const res = await fetch(path, {
     method,
-    headers: json === undefined ? undefined : { 'content-type': 'application/json' },
+    headers: json === undefined ? headers : { ...headers, 'content-type': 'application/json' },
     body: json === undefined ? form : JSON.stringify(json),
   });
   const data = res.headers.get('content-type')?.includes('application/json') ? await res.json() : null;

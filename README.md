@@ -34,7 +34,8 @@ FanWall is one Node process that keeps its data in a folder (`db.json` plus the 
    | `PORT` | Port to listen on (default 3000). |
    | `DATA_DIR` | Where the data lives. Put it on the persistent disk. |
    | `PUBLIC_URL` | The site's public address, e.g. `https://fanwall.example.org`. The QR codes on the signs point here. |
-   | `CREATE_KEY` | Optional. When set, creating an event asks for this key, so strangers can't create events on your server. |
+   | `OWNER_KEY` | Recommended. Your own key as the site owner. It opens `/owner`, where you see every event (with a link into each dashboard), make an invite code for each organizer, turn codes off, and delete events. When it is set, creating an event needs an invite code. Use a long random value. |
+   | `CREATE_KEY` | Optional, older. One shared key that also lets anyone who has it create events. |
    | `TRUST_PROXY` | The number of proxies in front of the app (usually `1`). Needed behind a proxy or load balancer so rate limits see the real visitor; leave unset otherwise. |
 
 3. **Put HTTPS in front.** Phones need it for the share sheet ("Save image" straight to Photos), and browsers mark plain `http` pages as not secure, which fans won't trust. On a VPS, Caddy is the simplest (it gets certificates by itself):
