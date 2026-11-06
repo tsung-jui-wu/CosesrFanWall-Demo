@@ -116,7 +116,7 @@ export async function saveOrShare(blob, name, title) {
 }
 
 // The clipboard API needs HTTPS (or localhost); elsewhere fall back to a prompt the person can copy from.
-// what: 'link' or 'code'.
+// what: 'link', 'code' (a fan's delete code) or 'invite' (an organizer's invite code).
 export async function copyText(text, what = 'link') {
   try {
     await navigator.clipboard.writeText(text);

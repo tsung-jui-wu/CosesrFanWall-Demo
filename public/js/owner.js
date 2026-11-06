@@ -12,8 +12,13 @@ const readKey = () => { try { return sessionStorage.getItem(KEY_STORE) || ''; } 
 const writeKey = (v) => { try { v ? sessionStorage.setItem(KEY_STORE, v) : sessionStorage.removeItem(KEY_STORE); } catch {} };
 const call = (path, opts = {}) => api(`/api/owner${path}`, { ...opts, headers: { 'x-owner-key': key } });
 
+// Also empties the lists: they hold every organizer's dashboard link, which must not stay in the page.
 function showLogin() {
   data = null;
+  $('events').replaceChildren();
+  $('invites').replaceChildren();
+  $('new-code-value').textContent = '';
+  $('new-code').hidden = true;
   $('login').hidden = false;
   $('owner-body').hidden = true;
   $('lock').hidden = true;
@@ -84,7 +89,7 @@ async function removeEvent(ev) {
 
 $('login-form').addEventListener('submit', (e) => {
   e.preventDefault();
-  key = $('owner-key').value;
+  key = $('owner-key').value.trim(); // a key pasted from a .env file often carries a space or newline
   $('owner-key').value = '';
   load();
 });
@@ -92,7 +97,6 @@ $('login-form').addEventListener('submit', (e) => {
 $('lock').addEventListener('click', () => {
   writeKey('');
   key = '';
-  $('new-code').hidden = true;
   showLogin();
 });
 
@@ -114,7 +118,7 @@ $('invite-form').addEventListener('submit', async (e) => {
   }
 });
 
-$('copy-code').addEventListener('click', () => copyText($('new-code-value').textContent, 'code'));
+$('copy-code').addEventListener('click', () => copyText($('new-code-value').textContent, 'invite'));
 
 onLangChange(render);
 

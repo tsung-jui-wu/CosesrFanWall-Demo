@@ -214,7 +214,8 @@ const findInvite = (key) => {
   const code = normalizeCode(key);
   if (!CODE_RE.test(code)) return undefined;
   const hash = sha256(code);
-  return Object.values(db.invites).find((i) => !i.revoked && safeEqual(i.codeHash, hash));
+  // Comparing hashes reveals nothing about a code, so a plain lookup is fine here.
+  return Object.values(db.invites).find((i) => !i.revoked && i.codeHash === hash);
 };
 
 // Which key let this event be made: { inviteId } for an invite code, {} for the owner or shared key.
@@ -222,7 +223,7 @@ const findInvite = (key) => {
 function createGrant(key) {
   if (!CREATE_KEY && !OWNER_KEY) return {};
   if (safeEqual(key, OWNER_KEY) || safeEqual(key, CREATE_KEY)) return {};
-  const invite = OWNER_KEY ? findInvite(key) : undefined;
+  const invite = findInvite(key);
   if (!invite) throw new HttpError(403, 'bad_create_key');
   return { inviteId: invite.id };
 }
@@ -736,10 +737,15 @@ app.use('/api/owner', ownerLimit, (req, res, next) => {
   next();
 }, owner);
 
-const inviteView = (i) => ({
-  id: i.id, label: i.label, createdAt: i.createdAt, revoked: Boolean(i.revoked),
-  events: Object.values(db.events).filter((e) => e.inviteId === i.id).length,
+// made: events per invite id, counted once per request (see eventsPerInvite).
+const inviteView = (i, made) => ({
+  id: i.id, label: i.label, createdAt: i.createdAt, revoked: Boolean(i.revoked), events: made[i.id] ?? 0,
 });
+function eventsPerInvite() {
+  const made = {};
+  for (const e of Object.values(db.events)) if (e.inviteId) made[e.inviteId] = (made[e.inviteId] ?? 0) + 1;
+  return made;
+}
 
 owner.get('/', (req, res) => {
   const cosplayers = {}, pending = {};
@@ -753,7 +759,8 @@ owner.get('/', (req, res) => {
       invite: getOwn(db.invites, e.inviteId)?.label ?? null,
       adminPath: `/admin/${e.organizerToken}`,
     }));
-  const invites = Object.values(db.invites).sort((a, b) => b.createdAt - a.createdAt).map(inviteView);
+  const made = eventsPerInvite();
+  const invites = Object.values(db.invites).sort((a, b) => b.createdAt - a.createdAt).map((i) => inviteView(i, made));
   res.json({ events, invites });
 });
 
@@ -761,12 +768,12 @@ owner.get('/', (req, res) => {
 // (an organizer or event name). Don't put emails in it.
 owner.post('/invites', (req, res) => {
   const label = textField(req.body?.label, 'inviteLabel', { max: MAX_TITLE, required: true });
-  if (Object.keys(db.invites).length >= MAX_INVITES) throw new HttpError(400, 'too_many_invites', { max: MAX_INVITES });
+  if (Object.values(db.invites).filter((i) => !i.revoked).length >= MAX_INVITES) throw new HttpError(400, 'too_many_invites', { max: MAX_INVITES });
   const code = newDeleteCode();
   const id = newId();
   db.invites[id] = { id, label, codeHash: sha256(normalizeCode(code)), createdAt: Date.now(), revoked: false };
   save();
-  res.status(201).json({ ...inviteView(db.invites[id]), code });
+  res.status(201).json({ ...inviteView(db.invites[id], {}), code });
 });
 
 // Revoking stops new events with that code. Events already made keep working.
@@ -775,7 +782,7 @@ owner.delete('/invites/:id', (req, res) => {
   if (!i) throw new HttpError(404, 'invite_not_found');
   i.revoked = true;
   save();
-  res.json(inviteView(i));
+  res.json(inviteView(i, eventsPerInvite()));
 });
 
 owner.delete('/events/:id', (req, res) => {

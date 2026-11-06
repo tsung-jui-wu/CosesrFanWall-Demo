@@ -961,3 +961,22 @@ test('the owner key opens /api/owner, and invite codes let organizers create eve
   assert.equal(db.cosplayers[cB.body.id], undefined);
   assert.equal((await owner(`/events/${evB.body.id}`, { method: 'DELETE' })).status, 404);
 });
+test('the invite cap counts only codes still in use', async () => {
+  const owner = (p, opts = {}) => call(`/api/owner${p}`, { ...opts, headers: { 'x-owner-key': 'owner-secret' } });
+  const fake = [];
+  for (let n = 0; n < 500; n++) {
+    const id = `fake${n}`;
+    db.invites[id] = { id, label: 'old', codeHash: 'x', createdAt: 0, revoked: true };
+    fake.push(id);
+  }
+  try {
+    const ok = await owner('/invites', { method: 'POST', json: { label: 'After many revoked' } });
+    assert.equal(ok.status, 201);
+    for (const id of fake) db.invites[id].revoked = false;
+    const full = await owner('/invites', { method: 'POST', json: { label: 'One too many' } });
+    assert.equal(full.status, 400);
+    assert.equal(full.body.error, 'too_many_invites');
+  } finally {
+    for (const id of fake) delete db.invites[id];
+  }
+});

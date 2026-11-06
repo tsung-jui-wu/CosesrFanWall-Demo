@@ -53,6 +53,7 @@ test('every key the pages and scripts use exists', () => {
     'reveal.sr': ['both', 'photos', 'notes'],
     'copy.link': ['done', 'prompt'],
     'copy.code': ['done', 'prompt'],
+    'copy.invite': ['done', 'prompt'],
     'demo.case': ['yuki', 'aki', 'mei', 'rin', 'kai'],
   };
   for (const [prefix, names] of Object.entries(families)) for (const n of names) assert.ok(has(`${prefix}.${n}`), `${prefix}.${n}`);
