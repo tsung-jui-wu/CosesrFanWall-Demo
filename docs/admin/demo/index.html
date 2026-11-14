@@ -1,0 +1,251 @@
+<!doctype html>
+<html data-static lang="en" class="i18n-pending">
+<head>
+  <meta charset="utf-8">
+  <base href="../../">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="robots" content="noindex">
+  <title data-i18n="admin.docTitle"></title>
+  <link rel="icon" href="favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="css/app.css">
+</head>
+<body class="admin">
+  <p class="demo-banner"><span data-i18n="demo.banner"></span> · <a href="" data-i18n="demo.allPages"></a></p>
+  <main>
+    <header class="topbar">
+      <div class="topbar-start">
+        <span class="wordmark">FanWall<span class="muted" data-i18n="admin.wordmark"></span></span>
+        <span class="access-left" id="access-left" role="status" hidden></span>
+      </div>
+      <div class="topbar-end">
+        <div class="lang-switch" data-lang-switch></div>
+      </div>
+    </header>
+
+    <section id="admin-error" class="panel" hidden>
+      <h2 data-i18n="admin.invalid.title"></h2>
+      <p class="muted" data-i18n="admin.invalid.text"></p>
+    </section>
+
+    <div id="dash-body">
+    <div class="notice" id="new-notice" hidden>
+      <strong data-i18n="admin.bookmark.title"></strong> <span data-i18n="admin.bookmark.text"></span>
+    </div>
+
+    <div class="dash">
+    <!-- The sidebar: the event's sections, every cosplayer, and a form to add one. On phones it sits on
+         top and its lists scroll sideways. -->
+    <nav class="side" aria-label="" data-i18n-aria-label="admin.tabs.label">
+      <div class="side-links">
+        <a class="side-link" data-tab="cosplayers"><span data-i18n="admin.nav.overview"></span></a>
+        <a class="side-link" data-tab="review"><span data-i18n="admin.review.heading"></span><span class="tab-n" id="tab-review-n"></span></a>
+        <a class="side-link" data-tab="settings"><span data-i18n="admin.tab.settings"></span></a>
+      </div>
+      <h2 class="side-h" data-i18n="admin.cos.heading"></h2>
+      <div class="side-cos" id="side-cos"></div>
+      <details class="side-add" id="side-add">
+        <summary data-i18n="admin.cos.addHeading"></summary>
+        <form id="cos-form">
+          <div class="field">
+            <label for="cos-name" data-i18n="admin.cos.name"></label>
+            <input id="cos-name" type="text" maxlength="60" required autocomplete="off">
+          </div>
+          <div class="field">
+            <label for="cos-character"><span data-i18n="admin.cos.character"></span> <span class="muted" data-i18n="common.optionalInline"></span></label>
+            <input id="cos-character" type="text" maxlength="60" autocomplete="off">
+          </div>
+          <button type="submit" class="primary" data-i18n="admin.cos.add"></button>
+        </form>
+      </details>
+    </nav>
+
+    <div class="dash-main">
+    <!-- Home: the event, its numbers, and the section picked in the sidebar. Counts live on these pages
+         only: fan and cosplayer pages never show numbers. -->
+    <div id="view-home">
+      <div class="dash-head">
+        <div>
+          <p class="state" id="event-state"></p>
+          <h1 id="event-title" data-i18n="admin.heading"></h1>
+        </div>
+        <button type="button" class="primary" id="release-all" hidden data-i18n="admin.releaseAll.label"></button>
+      </div>
+
+      <section class="stats" id="stats" aria-label="" data-i18n-aria-label="admin.stats.label">
+        <div class="stat spotlight"><span class="label" data-i18n="admin.stats.pending"></span><span class="num" id="stat-pending">0</span><span class="sub" data-i18n="admin.stats.pendingSub"></span></div>
+        <div class="stat"><span class="label" data-i18n="admin.stats.approved"></span><span class="num" id="stat-approved">0</span><span class="sub" data-i18n="admin.stats.approvedSub"></span></div>
+        <div class="stat"><span class="label" data-i18n="admin.stats.cosplayers"></span><span class="num" id="stat-cosplayers">0</span><span class="sub" id="stat-released"></span></div>
+        <div class="stat"><span class="label" data-i18n="admin.stats.keptFor"></span><span class="num"><span id="stat-days">30</span><small id="stat-days-unit"></small></span><span class="sub" data-i18n="admin.stats.keptForSub"></span></div>
+      </section>
+
+      <section id="panel-cosplayers" aria-labelledby="folders-h">
+        <h2 class="visually-hidden" id="folders-h" data-i18n="admin.cos.heading"></h2>
+        <div id="folders" class="folders"></div>
+      </section>
+
+      <section id="panel-review" aria-labelledby="mod-h" hidden></section>
+
+      <section id="panel-settings" aria-labelledby="settings-h" hidden>
+        <div class="settings-cards">
+          <section class="panel" aria-labelledby="settings-h">
+            <h2 id="settings-h" data-i18n="admin.settings.heading"></h2>
+            <form id="settings">
+              <div class="field">
+                <label for="ev-name" data-i18n="admin.settings.name"></label>
+                <input id="ev-name" type="text" maxlength="80" required autocomplete="off">
+              </div>
+              <div class="field">
+                <label for="ev-retention" data-i18n="admin.settings.retention"></label>
+                <input id="ev-retention" type="number" min="1" max="90" required>
+                <p class="small muted" data-i18n="admin.settings.retentionNote"></p>
+              </div>
+              <div class="field">
+                <label for="ev-lang" data-i18n="admin.settings.lang"></label>
+                <select id="ev-lang">
+                  <option value="" data-i18n="admin.settings.langNone"></option>
+                  <option value="en" lang="en">English</option>
+                  <option value="zh-Hans" lang="zh-Hans">简体中文</option>
+                  <option value="zh-Hant" lang="zh-Hant">繁體中文</option>
+                </select>
+                <p class="small muted" data-i18n="admin.settings.langNote"></p>
+              </div>
+              <div class="field">
+                <label for="ev-style" data-i18n="admin.settings.style"></label>
+                <select id="ev-style">
+                  <option value="mosaic" data-i18n="style.mosaic.name"></option>
+                  <option value="polaroid" data-i18n="style.polaroid.name"></option>
+                  <option value="constellation" data-i18n="style.constellation.name"></option>
+                </select>
+                <p class="small" id="ev-style-about"></p>
+                <p class="small muted" data-i18n="admin.settings.styleNote"></p>
+              </div>
+              <div class="field">
+                <label class="check"><input id="ev-open" type="checkbox"> <span data-i18n="admin.settings.open"></span></label>
+                <p class="small muted" data-i18n="admin.settings.openNote"></p>
+              </div>
+              <button class="primary" type="submit" data-i18n="admin.settings.save"></button>
+            </form>
+          </section>
+
+          <section class="panel" aria-labelledby="base-h">
+            <h2 id="base-h" data-i18n="admin.base.heading"></h2>
+            <img id="base-preview" class="base-preview" alt="" data-i18n-alt="admin.base.previewAlt" hidden>
+            <p class="muted" data-i18n="admin.base.text"></p>
+            <form id="base-form" class="row">
+              <label for="base-file" class="visually-hidden" data-i18n="admin.base.choose"></label>
+              <input id="base-file" type="file" accept="image/*" required>
+              <button type="submit" data-i18n="admin.base.upload"></button>
+            </form>
+          </section>
+        </div>
+      </section>
+    </div>
+
+    <!-- One cosplayer's page: their picture and name, then their review queue and their links. -->
+    <div id="view-cosplayer" hidden>
+      <a class="back" id="back" data-i18n="admin.back"></a>
+      <header class="cos-head">
+        <div class="cos-pic" id="cos-pic"></div>
+        <div class="cos-head-text">
+          <p class="muted" id="cos-subtitle"></p>
+          <div class="cos-name-row">
+            <h1 id="cos-title"></h1>
+            <!-- More: a small menu beside the name. Removing a cosplayer lives here, behind a confirm step. -->
+            <div class="more-menu" id="cos-more">
+              <button type="button" class="icon more-toggle" id="cos-more-toggle" aria-expanded="false" aria-controls="cos-more-options" aria-label="" data-i18n-aria-label="admin.cos.more">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><circle cx="5" cy="12" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="19" cy="12" r="2"/></svg>
+              </button>
+              <div class="more-options" id="cos-more-options" hidden>
+                <div class="more-group" id="cos-more-image"></div>
+                <hr class="more-sep">
+                <button type="button" class="danger" id="cos-remove" data-i18n="admin.cos.removeMenu"></button>
+              </div>
+            </div>
+          </div>
+          <p class="cos-meta"><span class="badge" id="cos-badge"></span><span class="small muted" id="cos-base-label"></span></p>
+        </div>
+      </header>
+
+      <div class="tabs" role="tablist" aria-label="" data-i18n-aria-label="admin.cosTabs.label" id="cos-tabs">
+        <a role="tab" id="tab-c-review" data-tab="review" aria-controls="panel-c-review"><span data-i18n="admin.review.heading"></span><span class="tab-n" id="tab-c-review-n"></span></a>
+        <a role="tab" id="tab-c-add" data-tab="add" aria-controls="panel-c-add"><span data-i18n="admin.cosTab.add"></span></a>
+        <a role="tab" id="tab-c-share" data-tab="share" aria-controls="panel-c-share"><span data-i18n="admin.cosTab.share"></span></a>
+      </div>
+      <section role="tabpanel" id="panel-c-review" aria-labelledby="tab-c-review"></section>
+      <!-- The organizer's own photos: several at once, sent one by one. Built once here, not on every
+           redraw, so the dashboard's half-minute refresh never clears a batch that is uploading. -->
+      <section role="tabpanel" id="panel-c-add" aria-labelledby="tab-c-add" hidden>
+        <section class="panel add-photos" id="add-drop" aria-labelledby="add-h">
+          <h2 id="add-h" data-i18n="admin.add.heading"></h2>
+          <p class="muted" id="add-text"></p>
+          <form id="add-form">
+            <div class="field">
+              <label for="add-files" data-i18n="admin.add.choose"></label>
+              <input id="add-files" type="file" accept="image/*" multiple>
+              <p class="small muted" id="add-chosen"></p>
+            </div>
+            <div class="field">
+              <label class="check"><input id="add-consent" type="checkbox"> <span id="add-checkbox"></span></label>
+            </div>
+            <button type="submit" class="primary" id="add-submit" disabled></button>
+          </form>
+          <div class="add-result" id="add-status" role="status" hidden>
+            <progress id="add-progress" max="1" value="0"></progress>
+            <p class="small" id="add-progress-text"></p>
+          </div>
+          <div class="add-result" id="add-failed" hidden>
+            <p class="small" id="add-failed-text"></p>
+            <ul class="small muted add-failed-list" id="add-failed-list"></ul>
+            <button type="button" id="add-retry" data-i18n="admin.add.retry"></button>
+          </div>
+        </section>
+      </section>
+      <section role="tabpanel" id="panel-c-share" aria-labelledby="tab-c-share" hidden>
+        <div class="share-cards" id="share-cards"></div>
+      </section>
+    </div>
+
+    <!-- The review queue: shown in the home Review section (every cosplayer) or on a cosplayer's page (theirs). -->
+    <section id="review" aria-labelledby="mod-h">
+      <div class="spread">
+        <h2 id="mod-h" class="visually-hidden" data-i18n="admin.review.heading"></h2>
+        <div id="f-cos" class="pills" role="group" aria-label="" data-i18n-aria-label="admin.filter.byCosplayer"></div>
+        <div class="row">
+          <label for="f-status" class="visually-hidden" data-i18n="admin.filter.status"></label>
+          <select id="f-status">
+            <option value="pending" data-i18n="admin.filter.pending"></option>
+            <option value="approved" data-i18n="admin.filter.approved"></option>
+            <option value="rejected" data-i18n="admin.filter.rejected"></option>
+            <option value="all" data-i18n="admin.filter.all"></option>
+          </select>
+          <button type="button" id="bulk-approve" data-i18n="admin.bulk.label"></button>
+        </div>
+      </div>
+      <div id="grid" class="grid" aria-label="" data-i18n-aria-label="admin.grid.label"></div>
+      <p class="small muted keys" id="keys-hint"></p>
+    </section>
+    </div>
+    </div>
+    </div>
+  </main>
+  <!-- The site owner's contact, for invite codes and questions. Plain links: nothing loads from these sites. -->
+  <footer class="site-footer">
+    <p data-i18n="landing.contact.lead"></p>
+    <p class="contact-links">
+      <a href="mailto:contact@ruiruiworld.com"><span class="muted" data-i18n="landing.contact.email"></span> contact@ruiruiworld.com</a>
+      <a href="https://www.instagram.com/ruirui.1208/" target="_blank" rel="noopener noreferrer"><span class="visually-hidden" data-i18n="landing.contact.instagram"></span><svg class="contact-icon" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true" focusable="false"><rect x="3" y="3" width="18" height="18" rx="5"/><circle cx="12" cy="12" r="4.2"/><circle cx="17.3" cy="6.7" r="0.6" fill="currentColor" stroke="none"/></svg>@ruirui.1208</a>
+    </p>
+  </footer>
+  <!-- Asks once more before a cosplayer and everything fans sent them are deleted. -->
+  <dialog class="confirm-dialog" id="remove-dialog" aria-labelledby="remove-title" aria-describedby="remove-text">
+    <h2 id="remove-title"></h2>
+    <p id="remove-text"></p>
+    <div class="row confirm-actions">
+      <button type="button" id="remove-cancel" data-i18n="common.cancel"></button>
+      <button type="button" class="danger solid" id="remove-confirm" data-i18n="admin.cos.removeConfirm"></button>
+    </div>
+  </dialog>
+  <div id="status" role="status" aria-live="polite"></div>
+  <script type="module" src="js/admin.js"></script>
+</body>
+</html>

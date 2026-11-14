@@ -1,0 +1,114 @@
+<!doctype html>
+<html data-static lang="en" class="i18n-pending">
+<head>
+  <meta charset="utf-8">
+  <base href="../../">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="robots" content="noindex">
+  <meta name="theme-color" content="#000000">
+  <title data-i18n="reveal.docTitle"></title>
+  <link rel="icon" href="favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="css/app.css">
+</head>
+<body class="reveal">
+  <main class="plain">
+  <canvas id="stage" role="img" aria-label="" data-i18n-aria-label="reveal.stage.mosaic"></canvas>
+  <p class="preview-chip" id="preview-chip" role="status" hidden></p>
+
+  <div id="caption" class="caption" aria-hidden="true">
+    <p class="caption-title" id="caption-title"></p>
+    <p class="caption-sub" id="caption-sub"></p>
+  </div>
+
+  <section id="intro" class="overlay" aria-labelledby="intro-title">
+    <div class="overlay-card spotlight">
+      <div class="intro-top">
+        <p class="eyebrow" id="intro-event"></p>
+        <div class="lang-switch" data-lang-switch></div>
+      </div>
+      <h1 id="intro-title" data-i18n="common.loading"></h1>
+      <p id="intro-text"></p>
+      <p class="saved-line" id="intro-saved" hidden><span class="saved-text"></span><a class="button saved-dl" href="#" download hidden data-i18n="reveal.saved.download"></a></p>
+      <button type="button" class="primary big" id="play" hidden disabled data-i18n="reveal.preparing"></button>
+      <p><button type="button" class="link" id="intro-manage" hidden data-i18n="reveal.manage.open"></button></p>
+    </div>
+  </section>
+
+  <nav id="controls" class="controls" aria-label="" data-i18n-aria-label="reveal.controls.label" hidden>
+    <!-- One frosted bar: replay (an icon), the main Save action, and the cosplayer's own controls. -->
+    <div class="control-bar">
+      <button type="button" id="skip" data-i18n="reveal.controls.skip"></button>
+      <button type="button" id="reset-zoom" hidden data-i18n="reveal.controls.resetZoom"></button>
+      <button type="button" class="icon" id="replay" aria-label="" data-i18n-aria-label="reveal.controls.replay">
+        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 12a8 8 0 1 0 2.4-5.7"/><path d="M4 4v4h4"/></svg>
+      </button>
+      <div class="save-menu" id="save-menu" hidden>
+        <button type="button" class="primary" id="save-toggle" aria-expanded="false" aria-controls="save-options" data-i18n="reveal.controls.save"></button>
+        <div class="save-options" id="save-options" hidden>
+          <button type="button" id="export" data-i18n="reveal.save.image"></button>
+          <button type="button" id="export-gif" data-i18n="reveal.save.gif"></button>
+        </div>
+      </div>
+      <button type="button" id="manage-open" data-i18n="reveal.controls.manage"></button>
+    </div>
+  </nav>
+  <p id="zoom-hint" class="zoom-hint" hidden></p>
+  </main>
+
+  <dialog id="manage" class="drawer" aria-labelledby="manage-h">
+    <div class="drawer-head">
+      <h2 id="manage-h" data-i18n="reveal.manage.heading"></h2>
+      <div class="row">
+        <div class="lang-switch" data-lang-switch></div>
+        <button type="button" class="close" data-close aria-label="" data-i18n-aria-label="common.close">✕</button>
+      </div>
+    </div>
+    <p class="saved-line" id="manage-saved" hidden><span class="saved-text"></span><a class="button saved-dl" href="#" download hidden data-i18n="reveal.saved.download"></a></p>
+    <p class="small" data-i18n="reveal.manage.intro"></p>
+    <div class="fav-row" id="fav-row" hidden>
+      <label class="check"><input type="checkbox" id="fav-only"> <span data-i18n="reveal.manage.favOnly"></span></label>
+      <p class="small" data-i18n="reveal.manage.favOnlyNote"></p>
+    </div>
+    <p id="download-row"><a class="button" id="download" href="#" download data-i18n="reveal.manage.download"></a></p>
+    <div id="remind-row">
+      <button type="button" id="remind" data-i18n="reveal.remind.button"></button>
+      <p class="small" data-i18n="reveal.remind.note"></p>
+    </div>
+    <ul id="items" class="items"></ul>
+    <section class="danger-zone" aria-labelledby="optout-h">
+      <h3 id="optout-h" data-i18n="reveal.optout.heading"></h3>
+      <p class="small" data-i18n="reveal.optout.text"></p>
+      <button type="button" class="danger" id="optout-start" data-i18n="reveal.optout.start"></button>
+      <div id="optout-confirm" hidden>
+        <p class="small"><strong data-i18n="reveal.optout.cantUndo"></strong> <span data-i18n="reveal.optout.saveFirst"></span></p>
+        <div class="row">
+          <button type="button" id="optout-cancel" data-i18n="common.cancel"></button>
+          <button type="button" class="danger solid" id="optout-go" data-i18n="reveal.optout.confirm"></button>
+        </div>
+      </div>
+    </section>
+  </dialog>
+
+  <dialog id="lightbox" class="lightbox" aria-label="" data-i18n-aria-label="reveal.lb.label">
+    <button type="button" class="close" data-close aria-label="" data-i18n-aria-label="common.close">✕</button>
+    <img id="lb-img" alt="" hidden>
+    <div id="lb-actions" class="row lb-actions" hidden>
+      <button type="button" id="lb-edit" data-i18n="reveal.lb.edit"></button>
+      <button type="button" id="lb-save" data-i18n="reveal.lb.save"></button>
+    </div>
+    <p id="lb-message" class="lb-message"></p>
+    <p id="lb-name" class="lb-name"></p>
+  </dialog>
+
+
+  <!-- The canvas is decorative for assistive tech; this carries the same content as text. -->
+  <section class="visually-hidden" aria-labelledby="sr-h">
+    <h2 id="sr-h" data-i18n="reveal.sr.heading"></h2>
+    <p id="sr-summary"></p>
+    <ul id="sr-list"></ul>
+  </section>
+
+  <div id="status" role="status" aria-live="polite"></div>
+  <script type="module" src="js/reveal.js"></script>
+</body>
+</html>
